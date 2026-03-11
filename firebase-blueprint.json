@@ -1,0 +1,155 @@
+{
+  "entities": {
+    "Post": {
+      "title": "Post",
+      "description": "A picture post uploaded by a user.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The name of the user who uploaded the picture."
+        },
+        "caption": {
+          "type": "string",
+          "description": "The caption for the picture."
+        },
+        "imageUrl": {
+          "type": "string",
+          "format": "uri",
+          "description": "The URL of the uploaded picture on ImgBB."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The timestamp when the post was created."
+        },
+        "uid": {
+          "type": "string",
+          "description": "The Firebase Auth UID of the user who uploaded the picture."
+        },
+        "visibility": {
+          "type": "string",
+          "enum": ["public", "private"],
+          "description": "Whether the post is public or private."
+        },
+        "likes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Array of user UIDs who liked the post."
+        }
+      },
+      "required": ["name", "caption", "imageUrl", "createdAt", "uid", "visibility"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "A comment on a post.",
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "The text content of the comment."
+        },
+        "uid": {
+          "type": "string",
+          "description": "The UID of the user who commented."
+        },
+        "name": {
+          "type": "string",
+          "description": "The display name of the user."
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "The profile picture URL of the user."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The timestamp when the comment was created."
+        },
+        "replyTo": {
+          "type": "string",
+          "description": "The ID of the parent comment, if this is a reply."
+        }
+      },
+      "required": ["text", "uid", "name", "createdAt"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile and balance.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "balance": {
+          "type": "number",
+          "description": "User's current balance in BDT."
+        }
+      },
+      "required": ["uid", "balance"]
+    },
+    "Withdrawal": {
+      "title": "Withdrawal",
+      "description": "A withdrawal request.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string"
+        },
+        "amount": {
+          "type": "number"
+        },
+        "method": {
+          "type": "string",
+          "enum": ["bkash", "nagad", "rocket"]
+        },
+        "accountNumber": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rejected"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "amount", "method", "accountNumber", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/posts/{postId}": {
+      "schema": {
+        "$ref": "#/entities/Post"
+      },
+      "description": "A collection of picture posts."
+    },
+    "/posts/{postId}/comments/{commentId}": {
+      "schema": {
+        "$ref": "#/entities/Comment"
+      },
+      "description": "Comments for a specific post."
+    },
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/User"
+      },
+      "description": "User profiles and balances."
+    },
+    "/withdrawals/{withdrawalId}": {
+      "schema": {
+        "$ref": "#/entities/Withdrawal"
+      },
+      "description": "Withdrawal requests."
+    }
+  }
+}

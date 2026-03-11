@@ -1,0 +1,47 @@
+@import url('https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --animate-glitch: glitch 5s infinite;
+  --animate-sheen: sheen 2s infinite;
+}
+
+@keyframes glitch {
+  0%, 90%, 100% {
+    transform: translate(0);
+    text-shadow: none;
+  }
+  92% {
+    transform: translate(-3px, 3px);
+    text-shadow: 3px 0px #E50914, -3px 0px #0ff;
+  }
+  94% {
+    transform: translate(-3px, -3px);
+    text-shadow: 3px 0px #0ff, -3px 0px #E50914;
+  }
+  96% {
+    transform: translate(3px, 3px);
+    text-shadow: -3px 0px #E50914, 3px 0px #0ff;
+  }
+  98% {
+    transform: translate(3px, -3px);
+    text-shadow: -3px 0px #0ff, 3px 0px #E50914;
+  }
+}
+
+@keyframes sheen {
+  0% {
+    transform: rotateZ(60deg) translate(-5em, 5em);
+  }
+  100% {
+    transform: rotateZ(60deg) translate(1em, -9em);
+  }
+}
+
+.glitch-effect {
+  animation: var(--animate-glitch);
+}
+
+.font-bengali {
+  font-family: 'Hind Siliguri', sans-serif;
+}

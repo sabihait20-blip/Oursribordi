@@ -1,0 +1,212 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: posts
+    // Document ID: auto-generated
+    // Fields:
+    //   - name: string (required, max length 50) - The name of the user
+    //   - caption: string (required, max length 500) - The caption for the picture
+    //   - imageUrl: string (required, valid URL) - The URL of the picture
+    //   - createdAt: timestamp (required, immutable) - Creation time
+    //   - uid: string (required, immutable) - The UID of the uploader
+    //   - visibility: string (required) - 'public' or 'private'
+    //   - likes: list (optional) - Array of UIDs
+    //
+    // Collection: posts/{postId}/comments
+    // Document ID: auto-generated
+    // Fields:
+    //   - text: string (required)
+    //   - uid: string (required)
+    //   - name: string (required)
+    //   - photoURL: string (optional)
+    //   - createdAt: timestamp (required)
+    //   - replyTo: string (optional)
+    //
+    // Collection: users
+    // Document ID: userId
+    // Fields:
+    //   - uid: string
+    //   - name: string
+    //   - email: string
+    //   - balance: number
+    //
+    // Collection: withdrawals
+    // Document ID: auto-generated
+    // Fields:
+    //   - uid: string
+    //   - amount: number
+    //   - method: string
+    //   - accountNumber: string
+    //   - status: string
+    //   - createdAt: timestamp
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+    
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == request.auth.uid;
+    }
+    
+    function uidNotModified() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == resource.data.uid;
+    }
+    
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+    
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+    
+    function validStringLength(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+        request.resource.data[field].size() >= minLen &&
+        request.resource.data[field].size() <= maxLen;
+    }
+    
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    // Domain Validators
+    function isValidPost(data) {
+      return hasOnlyAllowedFields(['name', 'caption', 'imageUrl', 'createdAt', 'uid', 'visibility', 'likes', 'photoURL']) &&
+             hasRequiredFields(['name', 'caption', 'imageUrl', 'createdAt', 'uid', 'visibility']) &&
+             validStringLength('name', 1, 50) &&
+             validStringLength('caption', 0, 500) &&
+             isValidUrl(data.imageUrl) &&
+             data.createdAt is timestamp &&
+             data.uid is string &&
+             data.uid.size() > 0 && data.uid.size() < 100 &&
+             (data.visibility == 'public' || data.visibility == 'private') &&
+             (!('likes' in data) || data.likes is list) &&
+             (!('photoURL' in data) || data.photoURL is string);
+    }
+
+    function isValidComment(data) {
+      return hasOnlyAllowedFields(['text', 'uid', 'name', 'photoURL', 'createdAt', 'replyTo']) &&
+             hasRequiredFields(['text', 'uid', 'name', 'createdAt']) &&
+             validStringLength('text', 1, 1000) &&
+             validStringLength('name', 1, 50) &&
+             data.uid is string &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['uid', 'name', 'email', 'balance']) &&
+             hasRequiredFields(['uid', 'balance']) &&
+             data.uid is string &&
+             data.balance is number;
+    }
+
+    function isValidWithdrawal(data) {
+      return hasOnlyAllowedFields(['uid', 'amount', 'method', 'accountNumber', 'status', 'createdAt']) &&
+             hasRequiredFields(['uid', 'amount', 'method', 'accountNumber', 'status', 'createdAt']) &&
+             data.uid is string &&
+             data.amount is number &&
+             data.amount >= 100 &&
+             (data.method == 'bkash' || data.method == 'nagad' || data.method == 'rocket') &&
+             data.accountNumber is string &&
+             data.status == 'pending' &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidUserPublic(data) {
+      return hasOnlyAllowedFields(['uid', 'name', 'photoURL']) &&
+             hasRequiredFields(['uid', 'name']) &&
+             data.uid is string &&
+             data.name is string &&
+             validStringLength('name', 1, 50) &&
+             (!('photoURL' in data) || data.photoURL is string);
+    }
+
+    function isValidMessage(data) {
+      return hasOnlyAllowedFields(['text', 'senderId', 'createdAt']) &&
+             hasRequiredFields(['text', 'senderId', 'createdAt']) &&
+             data.text is string &&
+             validStringLength('text', 1, 1000) &&
+             data.senderId is string &&
+             data.createdAt is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users_public/{userId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isOwner(userId) && isValidUserPublic(request.resource.data) && uidUnchanged();
+    }
+
+    match /chats/{chatId} {
+      allow read, write: if isAuthenticated() && chatId.matches('.*' + request.auth.uid + '.*');
+      
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && chatId.matches('.*' + request.auth.uid + '.*');
+        allow create: if isAuthenticated() && 
+                      chatId.matches('.*' + request.auth.uid + '.*') &&
+                      isValidMessage(request.resource.data) &&
+                      request.resource.data.senderId == request.auth.uid &&
+                      request.resource.data.createdAt == request.time;
+      }
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && uidUnchanged();
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && uidNotModified();
+    }
+
+    match /withdrawals/{withdrawalId} {
+      allow read: if isAuthenticated() && request.auth.uid == resource.data.uid;
+      allow create: if isAuthenticated() && isValidWithdrawal(request.resource.data) && uidUnchanged();
+    }
+
+    match /posts/{postId} {
+      allow read: if true;
+      
+      allow create: if isAuthenticated() && 
+                    isValidPost(request.resource.data) && 
+                    uidUnchanged() &&
+                    request.resource.data.createdAt == request.time;
+                    
+      allow update: if (isDocOwner() && 
+                        isValidPost(request.resource.data) && 
+                        uidNotModified() &&
+                        request.resource.data.createdAt == resource.data.createdAt) ||
+                       (isAuthenticated() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes']));
+                    
+      allow delete: if isDocOwner();
+      
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if isAuthenticated() && 
+                      isValidComment(request.resource.data) &&
+                      uidUnchanged() &&
+                      request.resource.data.createdAt == request.time;
+        allow update, delete: if isAuthenticated() && resource.data.uid == request.auth.uid;
+      }
+    }
+  }
+}
