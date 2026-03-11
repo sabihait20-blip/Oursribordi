@@ -148,9 +148,10 @@ export default function App() {
           const userSnap = await getDoc(userRef);
           
           if (!userSnap.exists()) {
+            const displayName = (currentUser.displayName || 'Anonymous').substring(0, 50);
             const newProfile = {
               uid: currentUser.uid,
-              name: currentUser.displayName || 'Anonymous',
+              name: displayName,
               email: currentUser.email || '',
               balance: 0
             };
@@ -160,15 +161,16 @@ export default function App() {
             // Create public profile for chat
             await setDoc(doc(db, 'users_public', currentUser.uid), {
               uid: currentUser.uid,
-              name: currentUser.displayName || 'Anonymous',
+              name: displayName,
               photoURL: currentUser.photoURL || ''
             });
           } else {
             setUserProfile(userSnap.data() as UserProfile);
+            const displayName = (currentUser.displayName || 'Anonymous').substring(0, 50);
             // Ensure public profile exists
             await setDoc(doc(db, 'users_public', currentUser.uid), {
               uid: currentUser.uid,
-              name: currentUser.displayName || 'Anonymous',
+              name: displayName,
               photoURL: currentUser.photoURL || ''
             }, { merge: true });
           }
@@ -393,15 +395,17 @@ export default function App() {
         newPhotoURL = await uploadToImgBB(editPhotoFile, setProfileUploadProgress);
       }
       
+      const displayName = (editName || user.displayName || 'Anonymous').substring(0, 50);
+      
       await updateProfile(user, {
-        displayName: editName || user.displayName,
+        displayName: displayName,
         photoURL: newPhotoURL
       });
       
       // Update user document in Firestore
       const userRef = doc(db, 'users', user.uid);
       await setDoc(userRef, {
-        name: editName || user.displayName,
+        name: displayName,
         photoURL: newPhotoURL,
         updatedAt: serverTimestamp()
       }, { merge: true });
@@ -410,11 +414,11 @@ export default function App() {
       const publicUserRef = doc(db, 'users_public', user.uid);
       await setDoc(publicUserRef, {
         uid: user.uid,
-        name: editName || user.displayName,
+        name: displayName,
         photoURL: newPhotoURL
       }, { merge: true });
       
-      setUser({ ...user, displayName: editName || user.displayName, photoURL: newPhotoURL } as User);
+      setUser({ ...user, displayName: displayName, photoURL: newPhotoURL } as User);
       setIsEditingProfile(false);
       setEditPhotoFile(null);
     } catch (error) {

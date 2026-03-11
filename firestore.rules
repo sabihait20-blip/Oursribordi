@@ -114,10 +114,12 @@ service cloud.firestore {
     }
 
     function isValidUser(data) {
-      return hasOnlyAllowedFields(['uid', 'name', 'email', 'balance']) &&
+      return hasOnlyAllowedFields(['uid', 'name', 'email', 'balance', 'photoURL', 'updatedAt']) &&
              hasRequiredFields(['uid', 'balance']) &&
              data.uid is string &&
-             data.balance is number;
+             data.balance is number &&
+             (!('photoURL' in data) || data.photoURL is string) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp);
     }
 
     function isValidWithdrawal(data) {
