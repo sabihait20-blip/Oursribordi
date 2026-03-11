@@ -4,7 +4,14 @@ import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, addDoc, onSnapshot, query, serverTimestamp, Timestamp, deleteDoc, doc, where, or, updateDoc, arrayUnion, arrayRemove, orderBy, getDoc, setDoc, increment } from 'firebase/firestore';
 import { onAuthStateChanged, User, updateProfile } from 'firebase/auth';
-import { db, auth, signInWithGoogle, logOut } from './firebase';
+import { 
+  signInWithGoogle, 
+  logOut, 
+  db, 
+  auth, 
+  signInWithEmail, 
+  signUpWithEmail 
+} from './firebase';
 
 interface Post {
   id: string;
@@ -85,6 +92,13 @@ export default function App() {
 
   // New state for tabs and wallet
   const [activeTab, setActiveTab] = useState<'home' | 'wallet' | 'profile' | 'messages'>('home');
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authDisplayName, setAuthDisplayName] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [withdrawMethod, setWithdrawMethod] = useState('bkash');
@@ -255,6 +269,31 @@ export default function App() {
     });
     return () => unsubscribe();
   }, [user, selectedChatUser]);
+
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setIsAuthLoading(true);
+    try {
+      if (authMode === 'login') {
+        await signInWithEmail(email, password);
+      } else {
+        if (!authDisplayName.trim()) {
+          throw new Error("Please enter your name");
+        }
+        await signUpWithEmail(email, password, authDisplayName);
+      }
+      setShowAuthModal(false);
+      setEmail('');
+      setPassword('');
+      setAuthDisplayName('');
+    } catch (error: any) {
+      console.error("Auth error:", error);
+      setAuthError(error.message || "Authentication failed");
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
 
   const handleSignIn = async () => {
     try {
@@ -586,7 +625,10 @@ export default function App() {
               </div>
             ) : (
               <div className="flex flex-col items-end gap-1">
-                <button onClick={handleSignIn} className="ml-2 flex items-center gap-2 px-4 py-1.5 bg-indigo-900/30 text-indigo-400 hover:bg-indigo-900/50 rounded-full text-sm font-medium transition-colors">
+                <button 
+                  onClick={() => setShowAuthModal(true)} 
+                  className="ml-2 flex items-center gap-2 px-4 py-1.5 bg-indigo-600 text-white hover:bg-indigo-700 rounded-full text-sm font-medium transition-colors shadow-lg shadow-indigo-500/20"
+                >
                   <LogIn size={16} />
                   Sign In
                 </button>
@@ -1424,6 +1466,109 @@ export default function App() {
           );
         })()}
       </AnimatePresence>
+      {/* Auth Modal */}
+      {showAuthModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center px-4 bg-black/80 backdrop-blur-sm">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="bg-[#0f172a] border border-slate-800 w-full max-w-md rounded-3xl overflow-hidden shadow-2xl"
+          >
+            <div className="p-8">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-white">
+                  {authMode === 'login' ? 'Welcome Back' : 'Create Account'}
+                </h2>
+                <button 
+                  onClick={() => setShowAuthModal(false)}
+                  className="p-2 hover:bg-slate-800 rounded-full text-slate-400 transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <form onSubmit={handleEmailAuth} className="space-y-4">
+                {authMode === 'signup' && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-1.5 ml-1">Full Name</label>
+                    <input 
+                      type="text" 
+                      value={authDisplayName}
+                      onChange={(e) => setAuthDisplayName(e.target.value)}
+                      className="w-full bg-slate-900/50 border border-slate-800 rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                      placeholder="John Doe"
+                      required
+                    />
+                  </div>
+                )}
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-1.5 ml-1">Email Address</label>
+                  <input 
+                    type="email" 
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full bg-slate-900/50 border border-slate-800 rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                    placeholder="name@example.com"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-1.5 ml-1">Password</label>
+                  <input 
+                    type="password" 
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full bg-slate-900/50 border border-slate-800 rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                    placeholder="••••••••"
+                    required
+                  />
+                </div>
+
+                {authError && (
+                  <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm">
+                    {authError}
+                  </div>
+                )}
+
+                <button 
+                  type="submit"
+                  disabled={isAuthLoading}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-indigo-500/20"
+                >
+                  {isAuthLoading ? 'Please wait...' : (authMode === 'login' ? 'Sign In' : 'Sign Up')}
+                </button>
+              </form>
+
+              <div className="relative my-8">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-slate-800"></div>
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-[#0f172a] px-2 text-slate-500">Or continue with</span>
+                </div>
+              </div>
+
+              <button 
+                onClick={handleSignIn}
+                className="w-full bg-white text-black font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-3 hover:bg-slate-100"
+              >
+                <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
+                Google
+              </button>
+
+              <p className="mt-8 text-center text-slate-400 text-sm">
+                {authMode === 'login' ? "Don't have an account?" : "Already have an account?"}
+                <button 
+                  onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}
+                  className="ml-2 text-indigo-400 font-bold hover:underline"
+                >
+                  {authMode === 'login' ? 'Sign Up' : 'Sign In'}
+                </button>
+              </p>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }
