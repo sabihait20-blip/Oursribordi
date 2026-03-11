@@ -26,3 +26,65 @@
 .cursor-blink {
   animation: blink 0.8s infinite;
 }
+
+@keyframes fadeInLeftBig {
+  from {
+    opacity: 0;
+    transform: translate3d(-1000px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes fadeInRightBig {
+  from {
+    opacity: 0;
+    transform: translate3d(1000px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes heartBeatNeon {
+  0% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 0 transparent);
+  }
+  2% {
+    transform: scale(1.1);
+    filter: drop-shadow(0 0 5px #fff) drop-shadow(0 0 15px #c8102e) drop-shadow(0 0 30px #c8102e);
+  }
+  4% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 2px #fff) drop-shadow(0 0 8px #c8102e) drop-shadow(0 0 15px #c8102e);
+  }
+  6% {
+    transform: scale(1.1);
+    filter: drop-shadow(0 0 5px #fff) drop-shadow(0 0 15px #c8102e) drop-shadow(0 0 30px #c8102e);
+  }
+  8% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 0 transparent);
+  }
+  100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 0 transparent);
+  }
+}
+
+.animate-fade-in-left-big {
+  animation: fadeInLeftBig 1s cubic-bezier(0.215, 0.61, 0.355, 1) both;
+}
+
+.animate-fade-in-right-big {
+  animation: fadeInRightBig 1s cubic-bezier(0.215, 0.61, 0.355, 1) both;
+}
+
+.animate-heartbeat-neon {
+  animation: heartBeatNeon 15s infinite;
+  animation-delay: 1s;
+}

@@ -92,9 +92,86 @@
         "balance": {
           "type": "number",
           "description": "User's current balance in BDT."
+        },
+        "photoURL": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "fcmToken": {
+          "type": "string",
+          "description": "Firebase Cloud Messaging token for push notifications."
         }
       },
-      "required": ["uid", "balance"]
+      "required": ["uid"]
+    },
+    "UserPublic": {
+      "title": "UserPublic",
+      "description": "Public user profile information.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "photoURL": {
+          "type": "string"
+        }
+      },
+      "required": ["uid", "name"]
+    },
+    "Chat": {
+      "title": "Chat",
+      "description": "A chat conversation between two users.",
+      "type": "object",
+      "properties": {
+        "participants": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "lastMessage": {
+          "type": "string"
+        },
+        "lastMessageTime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lastSenderId": {
+          "type": "string"
+        },
+        "isRead": {
+          "type": "boolean"
+        }
+      },
+      "required": ["participants"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "A message in a chat conversation.",
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "senderId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["sent", "read"]
+        }
+      },
+      "required": ["text", "senderId", "createdAt"]
     },
     "Withdrawal": {
       "title": "Withdrawal",
@@ -130,6 +207,26 @@
         }
       },
       "required": ["uid", "amount", "method", "accountNumber", "status", "createdAt"]
+    },
+    "Follower": {
+      "title": "Follower",
+      "description": "A follower relationship between two users.",
+      "type": "object",
+      "properties": {
+        "followerId": {
+          "type": "string",
+          "description": "The UID of the user who is following."
+        },
+        "followingId": {
+          "type": "string",
+          "description": "The UID of the user being followed."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["followerId", "followingId", "createdAt"]
     }
   },
   "firestore": {
@@ -151,11 +248,35 @@
       },
       "description": "User profiles and balances."
     },
+    "/users_public/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserPublic"
+      },
+      "description": "Public user profile information."
+    },
+    "/chats/{chatId}": {
+      "schema": {
+        "$ref": "#/entities/Chat"
+      },
+      "description": "Chat conversations."
+    },
+    "/chats/{chatId}/messages/{messageId}": {
+      "schema": {
+        "$ref": "#/entities/Message"
+      },
+      "description": "Messages within a chat."
+    },
     "/withdrawals/{withdrawalId}": {
       "schema": {
         "$ref": "#/entities/Withdrawal"
       },
       "description": "Withdrawal requests."
+    },
+    "/followers/{followerDocId}": {
+      "schema": {
+        "$ref": "#/entities/Follower"
+      },
+      "description": "Follower relationships."
     }
   }
 }

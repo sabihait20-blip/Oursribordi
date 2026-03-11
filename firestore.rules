@@ -89,6 +89,12 @@ service cloud.firestore {
       return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
     }
 
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "sabihait20@gmail.com" && request.auth.token.email_verified == true));
+    }
+
     // Domain Validators
     function isValidPost(data) {
       return hasOnlyAllowedFields(['name', 'caption', 'imageUrl', 'createdAt', 'uid', 'visibility', 'likes', 'photoURL']) &&
@@ -114,12 +120,14 @@ service cloud.firestore {
     }
 
     function isValidUser(data) {
-      return hasOnlyAllowedFields(['uid', 'name', 'email', 'balance', 'photoURL', 'updatedAt']) &&
+      return hasOnlyAllowedFields(['uid', 'name', 'email', 'balance', 'photoURL', 'updatedAt', 'fcmToken', 'role']) &&
              hasRequiredFields(['uid']) &&
              data.uid is string &&
              (!('balance' in data) || data.balance is number) &&
              (!('photoURL' in data) || data.photoURL is string) &&
-             (!('updatedAt' in data) || data.updatedAt is timestamp);
+             (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('fcmToken' in data) || data.fcmToken is string) &&
+             (!('role' in data) || data.role in ['admin', 'client']);
     }
 
     function isValidWithdrawal(data) {
@@ -130,7 +138,7 @@ service cloud.firestore {
              data.amount >= 100 &&
              (data.method == 'bkash' || data.method == 'nagad' || data.method == 'rocket') &&
              data.accountNumber is string &&
-             data.status == 'pending' &&
+             data.status in ['pending', 'approved', 'rejected'] &&
              data.createdAt is timestamp &&
              (!('adminEmail' in data) || data.adminEmail == 'sabihait20@gmail.com') &&
              (!('userEmail' in data) || data.userEmail is string);
@@ -152,12 +160,29 @@ service cloud.firestore {
              validStringLength('text', 1, 1000) &&
              data.senderId is string &&
              data.createdAt is timestamp &&
-             (!('status' in data) || data.status == 'sent' || data.status == 'read');
+             (!('status' in data) || data.status in ['sent', 'read']);
+    }
+
+    function isValidFollower(data) {
+      return hasOnlyAllowedFields(['followerId', 'followingId', 'createdAt']) &&
+             hasRequiredFields(['followerId', 'followingId', 'createdAt']) &&
+             data.followerId is string &&
+             data.followingId is string &&
+             data.createdAt is timestamp;
     }
 
     // ===============================================================
     // Rules
     // ===============================================================
+
+    match /followers/{followerId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && 
+                    isValidFollower(request.resource.data) && 
+                    request.resource.data.followerId == request.auth.uid &&
+                    request.resource.data.createdAt == request.time;
+      allow delete: if isAuthenticated() && resource.data.followerId == request.auth.uid;
+    }
 
     match /users_public/{userId} {
       allow read: if isAuthenticated();
@@ -184,14 +209,23 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read: if isAuthenticated() && request.auth.uid == userId;
-      allow create: if isOwner(userId) && isValidUser(request.resource.data) && uidUnchanged();
-      allow update: if isOwner(userId) && isValidUser(request.resource.data) && uidNotModified();
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow create: if isOwner(userId) && 
+                    isValidUser(request.resource.data) && 
+                    uidUnchanged() && 
+                    (request.resource.data.role == 'client' || isAdmin());
+      allow update: if isOwner(userId) && 
+                    isValidUser(request.resource.data) && 
+                    uidNotModified() && 
+                    (request.resource.data.role == resource.data.role || isAdmin());
     }
 
     match /withdrawals/{withdrawalId} {
-      allow read: if isAuthenticated() && request.auth.uid == resource.data.uid;
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.uid || isAdmin());
       allow create: if isAuthenticated() && isValidWithdrawal(request.resource.data) && uidUnchanged();
+      allow update: if isAdmin() && 
+                    isValidWithdrawal(request.resource.data) && 
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'adminEmail']);
     }
 
     match /posts/{postId} {

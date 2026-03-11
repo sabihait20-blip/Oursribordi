@@ -1,14 +1,16 @@
 /// <reference types="vite/client" />
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search } from 'lucide-react';
+import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search, Edit2, UserPlus, UserMinus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { collection, addDoc, onSnapshot, query, serverTimestamp, Timestamp, deleteDoc, doc, where, or, updateDoc, arrayUnion, arrayRemove, orderBy, getDoc, setDoc, increment } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, serverTimestamp, Timestamp, deleteDoc, doc, where, or, updateDoc, arrayUnion, arrayRemove, orderBy, getDoc, getDocs, setDoc, increment } from 'firebase/firestore';
 import { onAuthStateChanged, User, updateProfile } from 'firebase/auth';
+import { getToken, onMessage } from 'firebase/messaging';
 import { 
   signInWithGoogle, 
   logOut, 
   db, 
-  auth 
+  auth,
+  messaging
 } from './firebase';
 
 interface Post {
@@ -80,11 +82,13 @@ export default function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [selectedImage, setSelectedImage] = useState<Post | null>(null);
-  const [isTitleComplete, setIsTitleComplete] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [postToDelete, setPostToDelete] = useState<Post | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [editingPost, setEditingPost] = useState<Post | null>(null);
+  const [editCaptionText, setEditCaptionText] = useState('');
+  const [isSavingCaption, setIsSavingCaption] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [visibility, setVisibility] = useState<'public' | 'private'>('public');
   const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -93,6 +97,7 @@ export default function App() {
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileUploadProgress, setProfileUploadProgress] = useState(0);
   const profileFileInputRef = useRef<HTMLInputElement>(null);
+  const directProfileFileInputRef = useRef<HTMLInputElement>(null);
   
   // Comments state
   const [comments, setComments] = useState<Comment[]>([]);
@@ -116,15 +121,103 @@ export default function App() {
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [userSearchQuery, setUserSearchQuery] = useState('');
 
+  // Profile viewing state
+  const [viewingUserId, setViewingUserId] = useState<string | null>(null);
+  const [viewingUserProfile, setViewingUserProfile] = useState<UserPublicProfile | null>(null);
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [followersCount, setFollowersCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
+  const [isFollowLoading, setIsFollowLoading] = useState(false);
+
   useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery]);
+
+  useEffect(() => {
+    if (!viewingUserId) {
+      setViewingUserProfile(null);
+      return;
+    }
+    
+    // Fetch user profile if it's not the current user
+    if (user && viewingUserId !== user.uid) {
+      const u = allUsers.find(u => u.uid === viewingUserId);
+      if (u) {
+        setViewingUserProfile(u);
+      } else {
+        // fetch from users_public
+        getDoc(doc(db, 'users_public', viewingUserId)).then(snap => {
+          if (snap.exists()) setViewingUserProfile(snap.data() as UserPublicProfile);
+        });
+      }
+    } else {
+      setViewingUserProfile(null);
+    }
+
+    // Listen to followers count
+    const followersQuery = query(collection(db, 'followers'), where('followingId', '==', viewingUserId));
+    const unsubFollowers = onSnapshot(followersQuery, (snap) => {
+      setFollowersCount(snap.size);
+      if (user) {
+        setIsFollowing(snap.docs.some(doc => doc.data().followerId === user.uid));
+      }
+    });
+
+    // Listen to following count
+    const followingQuery = query(collection(db, 'followers'), where('followerId', '==', viewingUserId));
+    const unsubFollowing = onSnapshot(followingQuery, (snap) => {
+      setFollowingCount(snap.size);
+    });
+
+    return () => {
+      unsubFollowers();
+      unsubFollowing();
+    };
+  }, [viewingUserId, user, allUsers]);
 
   // Form state
   const [name, setName] = useState('');
   const [caption, setCaption] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (user && messaging && 'Notification' in window) {
+      const requestPermission = async () => {
+        try {
+          const permission = await Notification.requestPermission();
+          if (permission === 'granted') {
+            const token = await getToken(messaging, {
+              vapidKey: 'BId_z_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X' 
+            });
+            if (token) {
+              console.log('FCM Token:', token);
+              await setDoc(doc(db, 'users', user.uid), {
+                fcmToken: token
+              }, { merge: true });
+            }
+          }
+        } catch (error) {
+          console.error('Error getting FCM token:', error);
+        }
+      };
+
+      requestPermission();
+
+      const unsubscribe = onMessage(messaging, (payload) => {
+        console.log('Message received in foreground:', payload);
+        // Show a simple browser notification if the app is in foreground
+        if (payload.notification) {
+          new Notification(payload.notification.title || 'New Message', {
+            body: payload.notification.body,
+            icon: '/firebase-logo.png'
+          });
+        }
+      });
+
+      return () => unsubscribe();
+    }
+  }, [user]);
 
   useEffect(() => {
     let profileUnsub: (() => void) | undefined;
@@ -341,6 +434,29 @@ export default function App() {
       lastSenderId: user.uid,
       isRead: false
     }, { merge: true });
+
+    // Send Push Notification
+    try {
+      const recipientDoc = await getDoc(doc(db, 'users', selectedChatUser.uid));
+      const recipientData = recipientDoc.data();
+      if (recipientData?.fcmToken) {
+        await fetch('/api/send-notification', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token: recipientData.fcmToken,
+            title: `New message from ${user.displayName || 'User'}`,
+            body: messageText,
+            data: {
+              chatId: chatId,
+              senderId: user.uid
+            }
+          })
+        });
+      }
+    } catch (error) {
+      console.error('Error sending push notification:', error);
+    }
   };
 
   const uploadToImgBB = (file: File, onProgress: (progress: number) => void): Promise<string> => {
@@ -430,6 +546,78 @@ export default function App() {
     }
   };
 
+  const handleDirectProfilePictureUpdate = async (file: File) => {
+    if (!user) return;
+    setIsSavingProfile(true);
+    setProfileUploadProgress(0);
+    try {
+      const newPhotoURL = await uploadToImgBB(file, setProfileUploadProgress);
+      
+      await updateProfile(user, {
+        photoURL: newPhotoURL
+      });
+      
+      // Update user document in Firestore
+      const userRef = doc(db, 'users', user.uid);
+      await setDoc(userRef, {
+        photoURL: newPhotoURL,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+
+      // Update public profile for chat
+      const publicUserRef = doc(db, 'users_public', user.uid);
+      await setDoc(publicUserRef, {
+        uid: user.uid,
+        photoURL: newPhotoURL
+      }, { merge: true });
+
+      // Update local user object to reflect changes immediately
+      setUser({ ...user, photoURL: newPhotoURL } as User);
+    } catch (error) {
+      console.error("Error updating profile picture:", error);
+      alert("Failed to update profile picture.");
+    } finally {
+      setIsSavingProfile(false);
+      setProfileUploadProgress(0);
+    }
+  };
+
+  const handleFollow = async () => {
+    if (!user || !viewingUserId || isFollowLoading) return;
+    setIsFollowLoading(true);
+    try {
+      await addDoc(collection(db, 'followers'), {
+        followerId: user.uid,
+        followingId: viewingUserId,
+        createdAt: serverTimestamp()
+      });
+    } catch (error) {
+      console.error("Error following user:", error);
+    } finally {
+      setIsFollowLoading(false);
+    }
+  };
+
+  const handleUnfollow = async () => {
+    if (!user || !viewingUserId || isFollowLoading) return;
+    setIsFollowLoading(true);
+    try {
+      const q = query(
+        collection(db, 'followers'), 
+        where('followerId', '==', user.uid),
+        where('followingId', '==', viewingUserId)
+      );
+      const snapshot = await getDocs(q);
+      snapshot.forEach(async (docSnap) => {
+        await deleteDoc(doc(db, 'followers', docSnap.id));
+      });
+    } catch (error) {
+      console.error("Error unfollowing user:", error);
+    } finally {
+      setIsFollowLoading(false);
+    }
+  };
+
   const handlePost = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file) return;
@@ -491,6 +679,23 @@ export default function App() {
       alert("Failed to delete post.");
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleSaveCaption = async (postId: string) => {
+    if (!user) return;
+    setIsSavingCaption(true);
+    try {
+      await updateDoc(doc(db, 'posts', postId), {
+        caption: editCaptionText
+      });
+      setEditingPost(null);
+      setEditCaptionText('');
+    } catch (error) {
+      console.error("Error updating caption:", error);
+      alert("Failed to update caption.");
+    } finally {
+      setIsSavingCaption(false);
     }
   };
 
@@ -598,10 +803,15 @@ export default function App() {
     }
   };
 
-  const filteredPosts = posts.filter(post => 
-    post.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    post.caption?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredPosts = posts.filter(post => {
+    const matchesSearch = post.name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          post.caption?.toLowerCase().includes(searchQuery.toLowerCase());
+    
+    if (activeTab === 'profile' && viewingUserId) {
+      return matchesSearch && post.uid === viewingUserId;
+    }
+    return matchesSearch;
+  });
 
   const itemsPerPage = 10;
   const totalPages = Math.ceil(filteredPosts.length / itemsPerPage);
@@ -613,34 +823,14 @@ export default function App() {
       <header className="sticky top-0 z-40 bg-[#020617]/80 backdrop-blur-lg border-b border-slate-800">
         <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <motion.div 
-              initial="hidden"
-              animate="visible"
-              variants={{
-                visible: { transition: { staggerChildren: 0.3 } }
-              }}
-              onAnimationComplete={() => setIsTitleComplete(true)}
-              className={`flex font-bold text-2xl tracking-tight font-bengali ${isTitleComplete ? 'glitch-effect' : ''}`}
-            >
-              <motion.span
-                variants={{
-                  hidden: { opacity: 0, y: 10 },
-                  visible: { opacity: 1, y: 0 }
-                }}
-                className="bg-white text-[#102a5e] px-2 py-0.5 border-b-[3px] border-[#c8102e]"
-              >
+            <div className="flex font-bold text-2xl tracking-tight font-bengali animate-heartbeat-neon">
+              <span className="bg-white text-[#102a5e] px-2 py-0.5 border-b-[3px] border-[#c8102e] animate-fade-in-left-big">
                 আমাদের
-              </motion.span>
-              <motion.span
-                variants={{
-                  hidden: { opacity: 0, y: 10 },
-                  visible: { opacity: 1, y: 0 }
-                }}
-                className="bg-[#c8102e] text-white px-2 py-0.5 border-b-[3px] border-[#c8102e]"
-              >
+              </span>
+              <span className="bg-[#c8102e] text-white px-2 py-0.5 border-b-[3px] border-[#c8102e] animate-fade-in-right-big">
                 শ্রীবরদী
-              </motion.span>
-            </motion.div>
+              </span>
+            </div>
           </div>
           
           <div className="flex items-center gap-4">
@@ -795,21 +985,37 @@ export default function App() {
                 {/* Post Header */}
                 <div className="p-4 flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    {post.photoURL ? (
-                      <img 
-                        src={post.photoURL} 
-                        alt={post.name} 
-                        className="w-10 h-10 rounded-full object-cover border border-slate-800/50"
-                        referrerPolicy="no-referrer"
-                      />
-                    ) : (
-                      <div className="w-10 h-10 bg-indigo-900/50 text-indigo-400 rounded-full flex items-center justify-center font-bold text-lg">
-                        {post.name.charAt(0).toUpperCase()}
-                      </div>
-                    )}
+                    <button 
+                      onClick={() => {
+                        setViewingUserId(post.uid);
+                        setActiveTab('profile');
+                      }}
+                      className="flex-shrink-0 focus:outline-none"
+                    >
+                      {post.photoURL ? (
+                        <img 
+                          src={post.photoURL} 
+                          alt={post.name} 
+                          className="w-10 h-10 rounded-full object-cover border border-slate-800/50 hover:border-indigo-500 transition-colors"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="w-10 h-10 bg-indigo-900/50 text-indigo-400 rounded-full flex items-center justify-center font-bold text-lg hover:bg-indigo-800/50 transition-colors border border-transparent hover:border-indigo-500">
+                          {post.name.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                    </button>
                     <div>
                       <div className="flex items-center gap-2">
-                        <h3 className="font-semibold text-white">{post.name}</h3>
+                        <button 
+                          onClick={() => {
+                            setViewingUserId(post.uid);
+                            setActiveTab('profile');
+                          }}
+                          className="font-semibold text-white hover:text-indigo-400 transition-colors focus:outline-none text-left"
+                        >
+                          {post.name}
+                        </button>
                         {user && user.uid !== post.uid && (
                           <button 
                             onClick={() => {
@@ -835,18 +1041,59 @@ export default function App() {
                     </div>
                   </div>
                   {user?.uid === post.uid && (
-                    <button 
-                      onClick={() => setPostToDelete(post)}
-                      className="p-2 text-slate-500 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
-                      title="Delete post"
-                    >
-                      <Trash2 size={18} />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button 
+                        onClick={() => {
+                          setEditingPost(post);
+                          setEditCaptionText(post.caption || '');
+                        }}
+                        className="p-2 text-slate-500 hover:text-indigo-400 hover:bg-indigo-50/10 rounded-full transition-colors"
+                        title="Edit caption"
+                      >
+                        <Edit2 size={18} />
+                      </button>
+                      <button 
+                        onClick={() => setPostToDelete(post)}
+                        className="p-2 text-slate-500 hover:text-red-500 hover:bg-red-50/10 rounded-full transition-colors"
+                        title="Delete post"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
                   )}
                 </div>
 
                 {/* Post Caption */}
-                {post.caption && (
+                {editingPost?.id === post.id ? (
+                  <div className="px-4 pb-3">
+                    <textarea
+                      value={editCaptionText}
+                      onChange={(e) => setEditCaptionText(e.target.value)}
+                      className="w-full bg-slate-800/50 text-slate-200 rounded-xl p-3 border border-slate-700 focus:outline-none focus:border-indigo-500 resize-none"
+                      rows={3}
+                      placeholder="Write a caption..."
+                    />
+                    <div className="flex justify-end gap-2 mt-2">
+                      <button
+                        onClick={() => {
+                          setEditingPost(null);
+                          setEditCaptionText('');
+                        }}
+                        disabled={isSavingCaption}
+                        className="px-3 py-1.5 text-sm font-medium text-slate-400 hover:text-slate-200 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => handleSaveCaption(post.id)}
+                        disabled={isSavingCaption}
+                        className="px-3 py-1.5 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors flex items-center gap-2"
+                      >
+                        {isSavingCaption ? <Loader2 size={14} className="animate-spin" /> : 'Save'}
+                      </button>
+                    </div>
+                  </div>
+                ) : post.caption && (
                   <div className="px-4 pb-3 text-slate-200 text-[15px]">
                     {post.caption}
                   </div>
@@ -1019,104 +1266,203 @@ export default function App() {
         {activeTab === 'profile' && user && (
           <section className="max-w-2xl mx-auto">
             <div className="bg-[#0f172a]/80 rounded-2xl shadow-sm border border-slate-800 p-6 mb-8 text-center relative">
-              {!isEditingProfile ? (
-                <>
-                  <button 
-                    onClick={() => {
-                      setEditName(user.displayName || '');
-                      setIsEditingProfile(true);
-                    }}
-                    className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors text-sm font-medium"
-                  >
-                    Edit Profile
-                  </button>
-                  <img 
-                    src={user.photoURL || `https://ui-avatars.com/api/?name=${user.displayName}`} 
-                    alt="Profile" 
-                    className="w-24 h-24 rounded-full mx-auto mb-4 border-4 border-indigo-900/30 object-cover"
-                    referrerPolicy="no-referrer"
-                  />
-                  <h2 className="text-2xl font-bold text-white">{user.displayName}</h2>
-                  <p className="text-slate-500 mb-6">{user.email}</p>
-                  
-                  <button 
-                    onClick={logOut}
-                    className="inline-flex items-center gap-2 px-6 py-2 bg-slate-800/60 text-slate-300 rounded-full font-medium hover:bg-slate-700/60 transition-colors"
-                  >
-                    <LogOut size={18} />
-                    Sign Out
-                  </button>
-                </>
-              ) : (
-                <div className="space-y-4 max-w-sm mx-auto">
-                  <h2 className="text-xl font-bold text-white mb-4">Edit Profile</h2>
-                  
-                  <div className="relative w-24 h-24 mx-auto mb-4">
-                    <img 
-                      src={editPhotoFile ? URL.createObjectURL(editPhotoFile) : (user.photoURL || `https://ui-avatars.com/api/?name=${user.displayName}`)} 
-                      alt="Profile Preview" 
-                      className={`w-24 h-24 rounded-full object-cover border-4 border-indigo-900/30 ${isSavingProfile ? 'opacity-50' : ''}`}
-                      referrerPolicy="no-referrer"
-                    />
-                    {isSavingProfile && editPhotoFile && (
-                      <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40">
-                        <span className="text-white font-bold text-sm">{profileUploadProgress}%</span>
-                      </div>
-                    )}
-                    <button 
-                      onClick={() => profileFileInputRef.current?.click()}
-                      disabled={isSavingProfile}
-                      className="absolute bottom-0 right-0 p-1.5 bg-indigo-500 text-white rounded-full hover:bg-indigo-600 transition-colors disabled:opacity-50"
-                    >
-                      <Upload size={14} />
-                    </button>
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      className="hidden" 
-                      ref={profileFileInputRef}
-                      onChange={(e) => setEditPhotoFile(e.target.files?.[0] || null)}
-                      disabled={isSavingProfile}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-slate-400 mb-1 text-left">Display Name</label>
-                    <input 
-                      type="text" 
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                      className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-indigo-500"
-                      placeholder="Your name"
-                    />
-                  </div>
-
-                  <div className="flex gap-3 pt-4">
+              {viewingUserId === user.uid ? (
+                // Current User Profile
+                !isEditingProfile ? (
+                  <>
                     <button 
                       onClick={() => {
-                        setIsEditingProfile(false);
-                        setEditPhotoFile(null);
+                        setEditName(user.displayName || '');
+                        setIsEditingProfile(true);
                       }}
-                      className="flex-1 px-4 py-2 bg-slate-800 text-slate-300 rounded-lg font-medium hover:bg-slate-700 transition-colors"
-                      disabled={isSavingProfile}
+                      className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors text-sm font-medium"
                     >
-                      Cancel
+                      Edit Profile
                     </button>
+                    <div className="relative w-24 h-24 mx-auto mb-4 group cursor-pointer" onClick={() => !isSavingProfile && directProfileFileInputRef.current?.click()}>
+                      <img 
+                        src={user.photoURL || `https://ui-avatars.com/api/?name=${user.displayName}`} 
+                        alt="Profile" 
+                        className={`w-24 h-24 rounded-full border-4 border-indigo-900/30 object-cover transition-opacity ${isSavingProfile ? 'opacity-50' : 'group-hover:opacity-75'}`}
+                        referrerPolicy="no-referrer"
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Upload size={20} className="text-white" />
+                      </div>
+                      {isSavingProfile && (
+                        <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40">
+                          <span className="text-white font-bold text-sm">{profileUploadProgress}%</span>
+                        </div>
+                      )}
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        className="hidden" 
+                        ref={directProfileFileInputRef}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleDirectProfilePictureUpdate(file);
+                        }}
+                        disabled={isSavingProfile}
+                      />
+                    </div>
+                    <h2 className="text-2xl font-bold text-white">{user.displayName}</h2>
+                    <p className="text-slate-500 mb-4">{user.email}</p>
+                    
+                    <div className="flex justify-center gap-6 mb-6 text-slate-300">
+                      <div className="text-center">
+                        <span className="block font-bold text-white text-lg">{followersCount}</span>
+                        <span className="text-sm text-slate-500">Followers</span>
+                      </div>
+                      <div className="text-center">
+                        <span className="block font-bold text-white text-lg">{followingCount}</span>
+                        <span className="text-sm text-slate-500">Following</span>
+                      </div>
+                    </div>
+
                     <button 
-                      onClick={handleSaveProfile}
-                      disabled={isSavingProfile}
-                      className="flex-1 px-4 py-2 bg-indigo-500 text-white rounded-lg font-medium hover:bg-indigo-600 transition-colors flex items-center justify-center gap-2"
+                      onClick={logOut}
+                      className="inline-flex items-center gap-2 px-6 py-2 bg-slate-800/60 text-slate-300 rounded-full font-medium hover:bg-slate-700/60 transition-colors"
                     >
-                      {isSavingProfile ? <Loader2 size={16} className="animate-spin" /> : 'Save'}
+                      <LogOut size={18} />
+                      Sign Out
                     </button>
+                  </>
+                ) : (
+                  <div className="space-y-4 max-w-sm mx-auto">
+                    <h2 className="text-xl font-bold text-white mb-4">Edit Profile</h2>
+                    
+                    <div className="relative w-24 h-24 mx-auto mb-4">
+                      <img 
+                        src={editPhotoFile ? URL.createObjectURL(editPhotoFile) : (user.photoURL || `https://ui-avatars.com/api/?name=${user.displayName}`)} 
+                        alt="Profile Preview" 
+                        className={`w-24 h-24 rounded-full object-cover border-4 border-indigo-900/30 ${isSavingProfile ? 'opacity-50' : ''}`}
+                        referrerPolicy="no-referrer"
+                      />
+                      {isSavingProfile && editPhotoFile && (
+                        <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40">
+                          <span className="text-white font-bold text-sm">{profileUploadProgress}%</span>
+                        </div>
+                      )}
+                      <button 
+                        onClick={() => profileFileInputRef.current?.click()}
+                        disabled={isSavingProfile}
+                        className="absolute bottom-0 right-0 p-1.5 bg-indigo-500 text-white rounded-full hover:bg-indigo-600 transition-colors disabled:opacity-50"
+                      >
+                        <Upload size={14} />
+                      </button>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        className="hidden" 
+                        ref={profileFileInputRef}
+                        onChange={(e) => setEditPhotoFile(e.target.files?.[0] || null)}
+                        disabled={isSavingProfile}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-slate-400 mb-1 text-left">Display Name</label>
+                      <input 
+                        type="text" 
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-indigo-500"
+                        placeholder="Your name"
+                      />
+                    </div>
+
+                    <div className="flex gap-3 pt-4">
+                      <button 
+                        onClick={() => {
+                          setIsEditingProfile(false);
+                          setEditPhotoFile(null);
+                        }}
+                        className="flex-1 px-4 py-2 bg-slate-800 text-slate-300 rounded-lg font-medium hover:bg-slate-700 transition-colors"
+                        disabled={isSavingProfile}
+                      >
+                        Cancel
+                      </button>
+                      <button 
+                        onClick={handleSaveProfile}
+                        disabled={isSavingProfile}
+                        className="flex-1 px-4 py-2 bg-indigo-500 text-white rounded-lg font-medium hover:bg-indigo-600 transition-colors flex items-center justify-center gap-2"
+                      >
+                        {isSavingProfile ? <Loader2 size={16} className="animate-spin" /> : 'Save'}
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )
+              ) : (
+                // Other User Profile
+                viewingUserProfile && (
+                  <>
+                    <div className="relative w-24 h-24 mx-auto mb-4">
+                      <img 
+                        src={viewingUserProfile.photoURL || `https://ui-avatars.com/api/?name=${viewingUserProfile.name}`} 
+                        alt="Profile" 
+                        className="w-24 h-24 rounded-full border-4 border-indigo-900/30 object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+                    <h2 className="text-2xl font-bold text-white mb-4">{viewingUserProfile.name}</h2>
+                    
+                    <div className="flex justify-center gap-6 mb-6 text-slate-300">
+                      <div className="text-center">
+                        <span className="block font-bold text-white text-lg">{followersCount}</span>
+                        <span className="text-sm text-slate-500">Followers</span>
+                      </div>
+                      <div className="text-center">
+                        <span className="block font-bold text-white text-lg">{followingCount}</span>
+                        <span className="text-sm text-slate-500">Following</span>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-center gap-3">
+                      <button 
+                        onClick={() => {
+                          setSelectedChatUser(viewingUserProfile);
+                          setActiveTab('messages');
+                        }}
+                        className="inline-flex items-center gap-2 px-6 py-2 bg-indigo-600/20 text-indigo-400 rounded-full font-medium hover:bg-indigo-600/30 transition-colors"
+                      >
+                        <MessageCircle size={18} />
+                        Message
+                      </button>
+                      <button 
+                        onClick={isFollowing ? handleUnfollow : handleFollow}
+                        disabled={isFollowLoading}
+                        className={`inline-flex items-center gap-2 px-6 py-2 rounded-full font-medium transition-colors disabled:opacity-50 ${
+                          isFollowing 
+                            ? 'bg-slate-800/60 text-slate-300 hover:bg-slate-700/60' 
+                            : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                        }`}
+                      >
+                        {isFollowLoading ? (
+                          <Loader2 size={18} className="animate-spin" />
+                        ) : isFollowing ? (
+                          <>
+                            <UserMinus size={18} />
+                            Unfollow
+                          </>
+                        ) : (
+                          <>
+                            <UserPlus size={18} />
+                            Follow
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </>
+                )
               )}
             </div>
 
-            <h3 className="text-xl font-semibold text-white mb-4">Your Posts</h3>
+            <h3 className="text-xl font-semibold text-white mb-4">
+              {viewingUserId === user.uid ? 'Your Posts' : `${viewingUserProfile?.name}'s Posts`}
+            </h3>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-              {posts.filter(p => p.uid === user.uid).map(post => (
+              {posts.filter(p => p.uid === viewingUserId).map(post => (
                 <div key={post.id} className="aspect-square rounded-xl overflow-hidden bg-slate-800/60 cursor-pointer" onClick={() => setSelectedImage(post)}>
                   <img src={post.imageUrl} alt={post.caption} className="w-full h-full object-cover" />
                 </div>
@@ -1374,6 +1720,7 @@ export default function App() {
                 handleSignIn();
                 return;
               }
+              setViewingUserId(user.uid);
               setActiveTab('profile');
             }}
             className={`p-2 transition-colors ${activeTab === 'profile' ? 'text-[#38bdf8]' : 'text-slate-500 hover:text-slate-300'}`}
@@ -1476,13 +1823,78 @@ export default function App() {
                 <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-slate-900/40/50">
                   {/* Caption */}
                   <div className="flex gap-3">
-                    <div className="w-8 h-8 bg-indigo-900/50 text-indigo-400 rounded-full flex items-center justify-center font-bold shrink-0">
-                      {currentPost.name.charAt(0).toUpperCase()}
+                    <button 
+                      onClick={() => {
+                        setViewingUserId(currentPost.uid);
+                        setActiveTab('profile');
+                        setSelectedImage(null);
+                      }}
+                      className="shrink-0 focus:outline-none"
+                    >
+                      {currentPost.photoURL ? (
+                        <img src={currentPost.photoURL} className="w-8 h-8 rounded-full hover:opacity-80 transition-opacity" referrerPolicy="no-referrer" />
+                      ) : (
+                        <div className="w-8 h-8 bg-indigo-900/50 text-indigo-400 rounded-full flex items-center justify-center font-bold hover:bg-indigo-800/50 transition-colors">
+                          {currentPost.name.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                    </button>
+                    <div className="flex-1">
+                      <button 
+                        onClick={() => {
+                          setViewingUserId(currentPost.uid);
+                          setActiveTab('profile');
+                          setSelectedImage(null);
+                        }}
+                        className="font-medium text-white mr-2 hover:text-indigo-400 transition-colors focus:outline-none"
+                      >
+                        {currentPost.name}
+                      </button>
+                      {editingPost?.id === currentPost.id ? (
+                        <div className="mt-2">
+                          <textarea
+                            value={editCaptionText}
+                            onChange={(e) => setEditCaptionText(e.target.value)}
+                            className="w-full bg-slate-800/50 text-slate-200 rounded-xl p-3 border border-slate-700 focus:outline-none focus:border-indigo-500 resize-none"
+                            rows={3}
+                            placeholder="Write a caption..."
+                          />
+                          <div className="flex justify-end gap-2 mt-2">
+                            <button
+                              onClick={() => {
+                                setEditingPost(null);
+                                setEditCaptionText('');
+                              }}
+                              disabled={isSavingCaption}
+                              className="px-3 py-1.5 text-sm font-medium text-slate-400 hover:text-slate-200 transition-colors"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={() => handleSaveCaption(currentPost.id)}
+                              disabled={isSavingCaption}
+                              className="px-3 py-1.5 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors flex items-center gap-2"
+                            >
+                              {isSavingCaption ? <Loader2 size={14} className="animate-spin" /> : 'Save'}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-slate-300">{currentPost.caption}</span>
+                      )}
                     </div>
-                    <div>
-                      <span className="font-medium text-white mr-2">{currentPost.name}</span>
-                      <span className="text-slate-300">{currentPost.caption}</span>
-                    </div>
+                    {user?.uid === currentPost.uid && editingPost?.id !== currentPost.id && (
+                      <button 
+                        onClick={() => {
+                          setEditingPost(currentPost);
+                          setEditCaptionText(currentPost.caption || '');
+                        }}
+                        className="p-1.5 text-slate-500 hover:text-indigo-400 hover:bg-indigo-50/10 rounded-full transition-colors self-start"
+                        title="Edit caption"
+                      >
+                        <Edit2 size={16} />
+                      </button>
+                    )}
                   </div>
                   
                   {/* Comments List */}
@@ -1490,15 +1902,33 @@ export default function App() {
                     {comments.filter(c => !c.replyTo).map(comment => (
                       <div key={comment.id} className="space-y-3">
                         <div className="flex gap-3">
-                          {comment.photoURL ? (
-                            <img src={comment.photoURL} className="w-8 h-8 rounded-full shrink-0" referrerPolicy="no-referrer" />
-                          ) : (
-                            <div className="w-8 h-8 bg-slate-700/60 text-slate-500 rounded-full flex items-center justify-center font-bold shrink-0">
-                              {comment.name.charAt(0).toUpperCase()}
-                            </div>
-                          )}
+                          <button 
+                            onClick={() => {
+                              setViewingUserId(comment.uid);
+                              setActiveTab('profile');
+                              setSelectedImage(null);
+                            }}
+                            className="shrink-0 focus:outline-none"
+                          >
+                            {comment.photoURL ? (
+                              <img src={comment.photoURL} className="w-8 h-8 rounded-full hover:opacity-80 transition-opacity" referrerPolicy="no-referrer" />
+                            ) : (
+                              <div className="w-8 h-8 bg-slate-700/60 text-slate-500 rounded-full flex items-center justify-center font-bold hover:bg-slate-600/60 transition-colors">
+                                {comment.name.charAt(0).toUpperCase()}
+                              </div>
+                            )}
+                          </button>
                           <div>
-                            <span className="font-medium text-white mr-2">{comment.name}</span>
+                            <button 
+                              onClick={() => {
+                                setViewingUserId(comment.uid);
+                                setActiveTab('profile');
+                                setSelectedImage(null);
+                              }}
+                              className="font-medium text-white mr-2 hover:text-indigo-400 transition-colors focus:outline-none"
+                            >
+                              {comment.name}
+                            </button>
                             <span className="text-slate-300">{comment.text}</span>
                             <div className="text-xs text-slate-500 mt-1 flex items-center gap-3">
                               <button onClick={() => setReplyingTo(comment)} className="font-medium hover:text-slate-300">Reply</button>
@@ -1509,15 +1939,33 @@ export default function App() {
                         {/* Replies */}
                         {comments.filter(c => c.replyTo === comment.id).map(reply => (
                           <div key={reply.id} className="flex gap-3 ml-11">
-                            {reply.photoURL ? (
-                              <img src={reply.photoURL} className="w-6 h-6 rounded-full shrink-0" referrerPolicy="no-referrer" />
-                            ) : (
-                              <div className="w-6 h-6 bg-slate-700/60 text-slate-500 rounded-full flex items-center justify-center font-bold text-xs shrink-0">
-                                {reply.name.charAt(0).toUpperCase()}
-                              </div>
-                            )}
+                            <button 
+                              onClick={() => {
+                                setViewingUserId(reply.uid);
+                                setActiveTab('profile');
+                                setSelectedImage(null);
+                              }}
+                              className="shrink-0 focus:outline-none"
+                            >
+                              {reply.photoURL ? (
+                                <img src={reply.photoURL} className="w-6 h-6 rounded-full hover:opacity-80 transition-opacity" referrerPolicy="no-referrer" />
+                              ) : (
+                                <div className="w-6 h-6 bg-slate-700/60 text-slate-500 rounded-full flex items-center justify-center font-bold text-xs hover:bg-slate-600/60 transition-colors">
+                                  {reply.name.charAt(0).toUpperCase()}
+                                </div>
+                              )}
+                            </button>
                             <div>
-                              <span className="font-medium text-white mr-2">{reply.name}</span>
+                              <button 
+                                onClick={() => {
+                                  setViewingUserId(reply.uid);
+                                  setActiveTab('profile');
+                                  setSelectedImage(null);
+                                }}
+                                className="font-medium text-white mr-2 hover:text-indigo-400 transition-colors focus:outline-none"
+                              >
+                                {reply.name}
+                              </button>
                               <span className="text-slate-300">{reply.text}</span>
                             </div>
                           </div>
