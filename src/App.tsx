@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus } from 'lucide-react';
+import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, addDoc, onSnapshot, query, serverTimestamp, Timestamp, deleteDoc, doc, where, or, updateDoc, arrayUnion, arrayRemove, orderBy, getDoc, setDoc, increment } from 'firebase/firestore';
 import { onAuthStateChanged, User, updateProfile } from 'firebase/auth';
@@ -62,6 +62,16 @@ interface ChatMessage {
   text: string;
   senderId: string;
   createdAt: any;
+  status?: 'sent' | 'read';
+}
+
+interface ChatConversation {
+  id: string;
+  participants: string[];
+  lastMessage: string;
+  lastMessageTime: any;
+  lastSenderId: string;
+  isRead: boolean;
 }
 
 export default function App() {
@@ -97,10 +107,13 @@ export default function App() {
   const [withdrawAmount, setWithdrawAmount] = useState('');
 
   // Messaging state
-  const [chatUsers, setChatUsers] = useState<UserPublicProfile[]>([]);
+  const [allUsers, setAllUsers] = useState<UserPublicProfile[]>([]);
+  const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [selectedChatUser, setSelectedChatUser] = useState<UserPublicProfile | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState('');
+  const [showNewChatModal, setShowNewChatModal] = useState(false);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
 
   useEffect(() => {
     setCurrentPage(1);
@@ -235,17 +248,27 @@ export default function App() {
 
   useEffect(() => {
     if (!user) {
-      setChatUsers([]);
+      setAllUsers([]);
+      setConversations([]);
       return;
     }
-    const q = query(collection(db, 'users_public'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const qUsers = query(collection(db, 'users_public'));
+    const unsubUsers = onSnapshot(qUsers, (snapshot) => {
       const users = snapshot.docs
         .map(doc => ({ ...doc.data() } as UserPublicProfile))
         .filter(u => u.uid !== user.uid);
-      setChatUsers(users);
+      setAllUsers(users);
     });
-    return () => unsubscribe();
+
+    const qChats = query(collection(db, 'chats'), where('participants', 'array-contains', user.uid), orderBy('lastMessageTime', 'desc'));
+    const unsubChats = onSnapshot(qChats, (snapshot) => {
+      setConversations(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ChatConversation)));
+    });
+
+    return () => {
+      unsubUsers();
+      unsubChats();
+    };
   }, [user]);
 
   useEffect(() => {
@@ -256,7 +279,21 @@ export default function App() {
     const chatId = [user.uid, selectedChatUser.uid].sort().join('_');
     const q = query(collection(db, 'chats', chatId, 'messages'), orderBy('createdAt', 'asc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setChatMessages(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ChatMessage)));
+      const msgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ChatMessage));
+      setChatMessages(msgs);
+
+      // Mark messages as read
+      const unreadMsgs = snapshot.docs.filter(doc => doc.data().senderId !== user.uid && doc.data().status !== 'read');
+      unreadMsgs.forEach(async (msgDoc) => {
+        await updateDoc(doc(db, 'chats', chatId, 'messages', msgDoc.id), { status: 'read' });
+      });
+
+      if (msgs.length > 0) {
+        const lastMsg = msgs[msgs.length - 1];
+        if (lastMsg.senderId !== user.uid) {
+          updateDoc(doc(db, 'chats', chatId), { isRead: true }).catch(console.error);
+        }
+      }
     });
     return () => unsubscribe();
   }, [user, selectedChatUser]);
@@ -284,12 +321,23 @@ export default function App() {
     if (!user || !selectedChatUser || !newMessage.trim()) return;
     
     const chatId = [user.uid, selectedChatUser.uid].sort().join('_');
-    await addDoc(collection(db, 'chats', chatId, 'messages'), {
-      text: newMessage.trim(),
-      senderId: user.uid,
-      createdAt: serverTimestamp()
-    });
+    const messageText = newMessage.trim();
     setNewMessage('');
+
+    await addDoc(collection(db, 'chats', chatId, 'messages'), {
+      text: messageText,
+      senderId: user.uid,
+      createdAt: serverTimestamp(),
+      status: 'sent'
+    });
+
+    await setDoc(doc(db, 'chats', chatId), {
+      participants: [user.uid, selectedChatUser.uid],
+      lastMessage: messageText,
+      lastMessageTime: serverTimestamp(),
+      lastSenderId: user.uid,
+      isRead: false
+    }, { merge: true });
   };
 
   const uploadToImgBB = (file: File, onProgress: (progress: number) => void): Promise<string> => {
@@ -598,7 +646,6 @@ export default function App() {
                   <LogIn size={16} />
                   Sign In
                 </button>
-                <p className="text-[10px] text-slate-500 hidden sm:block">Chrome user? Open in new tab if sign-in fails.</p>
               </div>
             )}
           </div>
@@ -606,15 +653,6 @@ export default function App() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-8 pb-24">
-        {!user && (
-          <div className="mb-6 p-4 bg-amber-900/20 border border-amber-500/30 rounded-2xl text-amber-200 text-sm flex items-start gap-3">
-            <div className="mt-0.5 text-xl">⚠️</div>
-            <div>
-              <p className="font-bold mb-1">Chrome User? Login might be blocked here.</p>
-              <p className="opacity-90">If the "Sign In" button doesn't work, please click the <strong>"Open in new tab"</strong> button at the top right of your screen to use the app properly. This is a standard security measure in Google Chrome for embedded windows.</p>
-            </div>
-          </div>
-        )}
         {activeTab === 'home' && (
           <>
             {/* Upload Section */}
@@ -760,7 +798,7 @@ export default function App() {
                         {user && user.uid !== post.uid && (
                           <button 
                             onClick={() => {
-                              const chatUser = chatUsers.find(u => u.uid === post.uid) || {
+                              const chatUser = allUsers.find(u => u.uid === post.uid) || {
                                 uid: post.uid,
                                 name: post.name,
                                 photoURL: post.photoURL
@@ -1066,30 +1104,60 @@ export default function App() {
         )}
 
         {activeTab === 'messages' && user && (
-          <section className="max-w-4xl mx-auto h-[calc(100vh-12rem)] min-h-[500px] bg-[#0f172a]/80 rounded-2xl shadow-sm border border-slate-800 overflow-hidden flex">
+          <section className="max-w-4xl mx-auto h-[calc(100vh-12rem)] min-h-[500px] bg-[#0f172a]/80 rounded-2xl shadow-sm border border-slate-800 overflow-hidden flex relative">
             {/* Users List */}
             <div className={`w-full md:w-80 border-r border-slate-800 flex flex-col ${selectedChatUser ? 'hidden md:flex' : 'flex'}`}>
-              <div className="p-4 border-b border-slate-800 bg-slate-900/40">
+              <div className="p-4 border-b border-slate-800 bg-slate-900/40 flex justify-between items-center">
                 <h2 className="text-lg font-bold text-white">Messages</h2>
+                <button onClick={() => setShowNewChatModal(true)} className="p-2 bg-indigo-600 hover:bg-indigo-700 rounded-full text-white transition-colors">
+                  <Plus size={20} />
+                </button>
               </div>
               <div className="flex-1 overflow-y-auto">
-                {chatUsers.length === 0 ? (
-                  <div className="p-8 text-center text-slate-500">No users found.</div>
+                {conversations.length === 0 ? (
+                  <div className="p-8 text-center text-slate-500">No messages yet. Start a new chat!</div>
                 ) : (
-                  chatUsers.map(chatUser => (
-                    <button
-                      key={chatUser.uid}
-                      onClick={() => setSelectedChatUser(chatUser)}
-                      className={`w-full p-4 flex items-center gap-3 hover:bg-slate-900/40 transition-colors border-b border-slate-800/50 text-left ${selectedChatUser?.uid === chatUser.uid ? 'bg-indigo-900/30/50' : ''}`}
-                    >
-                      <div className="w-12 h-12 rounded-full bg-indigo-900/50 text-indigo-400 flex items-center justify-center font-bold text-lg shrink-0">
-                        {chatUser.name.charAt(0).toUpperCase()}
-                      </div>
-                      <div className="flex-1 overflow-hidden">
-                        <h3 className="font-semibold text-white truncate">{chatUser.name}</h3>
-                      </div>
-                    </button>
-                  ))
+                  conversations.map(conv => {
+                    const otherUserId = conv.participants.find(id => id !== user.uid);
+                    const otherUser = allUsers.find(u => u.uid === otherUserId);
+                    if (!otherUser) return null;
+
+                    const isUnread = conv.lastSenderId !== user.uid && !conv.isRead;
+
+                    return (
+                      <button
+                        key={conv.id}
+                        onClick={() => setSelectedChatUser(otherUser)}
+                        className={`w-full p-4 flex items-center gap-3 hover:bg-slate-900/40 transition-colors border-b border-slate-800/50 text-left ${selectedChatUser?.uid === otherUser.uid ? 'bg-indigo-900/30/50' : ''}`}
+                      >
+                        <div className="relative shrink-0">
+                          {otherUser.photoURL ? (
+                            <img src={otherUser.photoURL} alt={otherUser.name} className="w-12 h-12 rounded-full border border-slate-700 object-cover" referrerPolicy="no-referrer" />
+                          ) : (
+                            <div className="w-12 h-12 rounded-full bg-indigo-900/50 text-indigo-400 flex items-center justify-center font-bold text-lg">
+                              {otherUser.name.charAt(0).toUpperCase()}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1 overflow-hidden">
+                          <h3 className={`truncate ${isUnread ? 'font-bold text-white' : 'font-semibold text-slate-200'}`}>{otherUser.name}</h3>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            {conv.lastSenderId === user.uid && (
+                              <span className="shrink-0">
+                                {conv.isRead ? <CheckCheck size={14} className="text-emerald-500" /> : <Check size={14} className="text-slate-400" />}
+                              </span>
+                            )}
+                            <p className={`text-sm truncate ${isUnread ? 'font-bold text-white' : 'text-slate-400'}`}>
+                              {conv.lastSenderId === user.uid ? 'You: ' : ''}{conv.lastMessage}
+                            </p>
+                          </div>
+                        </div>
+                        {isUnread && (
+                          <div className="w-3 h-3 bg-indigo-500 rounded-full shrink-0"></div>
+                        )}
+                      </button>
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -1105,9 +1173,13 @@ export default function App() {
                     >
                       <ChevronLeft size={24} />
                     </button>
-                    <div className="w-10 h-10 rounded-full bg-indigo-900/50 text-indigo-400 flex items-center justify-center font-bold text-lg">
-                      {selectedChatUser.name.charAt(0).toUpperCase()}
-                    </div>
+                    {selectedChatUser.photoURL ? (
+                      <img src={selectedChatUser.photoURL} alt={selectedChatUser.name} className="w-10 h-10 rounded-full border border-slate-700 object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-10 h-10 rounded-full bg-indigo-900/50 text-indigo-400 flex items-center justify-center font-bold text-lg">
+                        {selectedChatUser.name.charAt(0).toUpperCase()}
+                      </div>
+                    )}
                     <div>
                       <h3 className="font-bold text-white">{selectedChatUser.name}</h3>
                     </div>
@@ -1117,10 +1189,19 @@ export default function App() {
                     {chatMessages.map(msg => {
                       const isMe = msg.senderId === user.uid;
                       return (
-                        <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                          <div className={`max-w-[75%] rounded-2xl px-4 py-2 ${isMe ? 'bg-indigo-500 text-white rounded-br-sm' : 'bg-[#0f172a]/80 border border-slate-800 text-slate-200 rounded-bl-sm'}`}>
+                        <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                          <div className={`max-w-[75%] rounded-2xl px-4 py-2 ${isMe ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-[#0f172a]/80 border border-slate-800 text-slate-200 rounded-bl-sm'}`}>
                             {msg.text}
                           </div>
+                          {isMe && (
+                            <div className="mt-1 flex items-center gap-1 text-[10px] text-slate-500">
+                              {msg.status === 'read' ? (
+                                <CheckCheck size={12} className="text-emerald-500" />
+                              ) : (
+                                <Check size={12} />
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -1143,7 +1224,7 @@ export default function App() {
                       <button 
                         type="submit"
                         disabled={!newMessage.trim()}
-                        className="p-2.5 bg-indigo-500 text-white rounded-full hover:bg-indigo-500 transition-colors disabled:opacity-50"
+                        className="p-2.5 bg-indigo-500 text-white rounded-full hover:bg-indigo-600 transition-colors disabled:opacity-50"
                       >
                         <Reply size={20} className="rotate-180" />
                       </button>
@@ -1154,10 +1235,59 @@ export default function App() {
                 <div className="flex-1 flex flex-col items-center justify-center text-slate-500 p-8 text-center">
                   <MessageCircle size={48} className="text-slate-300 mb-4" />
                   <h3 className="text-xl font-medium text-slate-300 mb-2">Your Messages</h3>
-                  <p>Select a user from the list to start chatting.</p>
+                  <p>Select a conversation to start chatting.</p>
                 </div>
               )}
             </div>
+            
+            {/* New Chat Modal */}
+            {showNewChatModal && (
+              <div className="absolute inset-0 z-50 bg-[#0f172a]/95 backdrop-blur-sm flex flex-col">
+                <div className="p-4 border-b border-slate-800 flex items-center gap-3">
+                  <button onClick={() => setShowNewChatModal(false)} className="p-2 -ml-2 text-slate-400 hover:text-white">
+                    <ChevronLeft size={24} />
+                  </button>
+                  <h3 className="font-bold text-white text-lg">New Chat</h3>
+                </div>
+                <div className="p-4 border-b border-slate-800">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                    <input 
+                      type="text"
+                      placeholder="Search users..."
+                      value={userSearchQuery}
+                      onChange={(e) => setUserSearchQuery(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2.5 bg-slate-800/60 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                    />
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto p-2">
+                  {allUsers.filter(u => u.name.toLowerCase().includes(userSearchQuery.toLowerCase())).map(u => (
+                    <button
+                      key={u.uid}
+                      onClick={() => {
+                        setSelectedChatUser(u);
+                        setShowNewChatModal(false);
+                        setUserSearchQuery('');
+                      }}
+                      className="w-full p-3 flex items-center gap-3 hover:bg-slate-800/50 rounded-xl transition-colors text-left"
+                    >
+                      {u.photoURL ? (
+                        <img src={u.photoURL} alt={u.name} className="w-10 h-10 rounded-full border border-slate-700 object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-indigo-900/50 text-indigo-400 flex items-center justify-center font-bold text-lg shrink-0">
+                          {u.name.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <span className="font-medium text-white">{u.name}</span>
+                    </button>
+                  ))}
+                  {allUsers.filter(u => u.name.toLowerCase().includes(userSearchQuery.toLowerCase())).length === 0 && (
+                    <div className="p-8 text-center text-slate-500">No users found.</div>
+                  )}
+                </div>
+              </div>
+            )}
           </section>
         )}
       </main>
