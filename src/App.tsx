@@ -264,8 +264,10 @@ export default function App() {
       const isIframe = window.self !== window.top;
       let message = "Sign in failed: " + (error.message || "Unknown error");
       
-      if (isIframe && (error.code === 'auth/network-request-failed' || error.code === 'auth/internal-error' || error.message?.includes('popup'))) {
-        message += "\n\nTip: Google Chrome often blocks sign-in inside an iframe. Please try opening the app in a new tab using the 'Open in new tab' button at the top right of the preview.";
+      if (error.code === 'auth/popup-blocked') {
+        message = "Sign-in popup was blocked by your browser. Please allow popups for this site or click the 'Open in new tab' button at the top right.";
+      } else if (isIframe && (error.code === 'auth/network-request-failed' || error.code === 'auth/internal-error' || error.message?.includes('popup') || error.code === 'auth/web-storage-unsupported')) {
+        message = "Google Chrome blocks sign-in inside this preview window for security.\n\nTo fix this:\n1. Click the 'Open in new tab' button at the top right of this screen.\n2. Sign in from the new tab.\n\nThis is a standard Chrome security measure for embedded apps.";
       }
       
       alert(message);
@@ -596,6 +598,15 @@ export default function App() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-8 pb-24">
+        {!user && (
+          <div className="mb-6 p-4 bg-amber-900/20 border border-amber-500/30 rounded-2xl text-amber-200 text-sm flex items-start gap-3">
+            <div className="mt-0.5 text-xl">⚠️</div>
+            <div>
+              <p className="font-bold mb-1">Chrome User? Login might be blocked here.</p>
+              <p className="opacity-90">If the "Sign In" button doesn't work, please click the <strong>"Open in new tab"</strong> button at the top right of your screen to use the app properly. This is a standard security measure in Google Chrome for embedded windows.</p>
+            </div>
+          </div>
+        )}
         {activeTab === 'home' && (
           <>
             {/* Upload Section */}
