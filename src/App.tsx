@@ -261,7 +261,14 @@ export default function App() {
       await signInWithGoogle();
     } catch (error: any) {
       console.error("Sign in error:", error);
-      alert("Sign in failed: " + (error.message || "Unknown error"));
+      const isIframe = window.self !== window.top;
+      let message = "Sign in failed: " + (error.message || "Unknown error");
+      
+      if (isIframe && (error.code === 'auth/network-request-failed' || error.code === 'auth/internal-error' || error.message?.includes('popup'))) {
+        message += "\n\nTip: Google Chrome often blocks sign-in inside an iframe. Please try opening the app in a new tab using the 'Open in new tab' button at the top right of the preview.";
+      }
+      
+      alert(message);
     }
   };
 
@@ -576,10 +583,13 @@ export default function App() {
                 </button>
               </div>
             ) : (
-              <button onClick={handleSignIn} className="ml-2 flex items-center gap-2 px-4 py-1.5 bg-indigo-900/30 text-indigo-400 hover:bg-indigo-900/50 rounded-full text-sm font-medium transition-colors">
-                <LogIn size={16} />
-                Sign In
-              </button>
+              <div className="flex flex-col items-end gap-1">
+                <button onClick={handleSignIn} className="ml-2 flex items-center gap-2 px-4 py-1.5 bg-indigo-900/30 text-indigo-400 hover:bg-indigo-900/50 rounded-full text-sm font-medium transition-colors">
+                  <LogIn size={16} />
+                  Sign In
+                </button>
+                <p className="text-[10px] text-slate-500 hidden sm:block">Chrome user? Open in new tab if sign-in fails.</p>
+              </div>
             )}
           </div>
         </div>
