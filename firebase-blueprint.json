@@ -121,6 +121,12 @@
         "createdAt": {
           "type": "string",
           "format": "date-time"
+        },
+        "adminEmail": {
+          "type": "string"
+        },
+        "userEmail": {
+          "type": "string"
         }
       },
       "required": ["uid", "amount", "method", "accountNumber", "status", "createdAt"]

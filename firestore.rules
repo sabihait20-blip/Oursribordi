@@ -121,7 +121,7 @@ service cloud.firestore {
     }
 
     function isValidWithdrawal(data) {
-      return hasOnlyAllowedFields(['uid', 'amount', 'method', 'accountNumber', 'status', 'createdAt']) &&
+      return hasOnlyAllowedFields(['uid', 'amount', 'method', 'accountNumber', 'status', 'createdAt', 'adminEmail', 'userEmail']) &&
              hasRequiredFields(['uid', 'amount', 'method', 'accountNumber', 'status', 'createdAt']) &&
              data.uid is string &&
              data.amount is number &&
@@ -129,7 +129,9 @@ service cloud.firestore {
              (data.method == 'bkash' || data.method == 'nagad' || data.method == 'rocket') &&
              data.accountNumber is string &&
              data.status == 'pending' &&
-             data.createdAt is timestamp;
+             data.createdAt is timestamp &&
+             (!('adminEmail' in data) || data.adminEmail == 'sabihait20@gmail.com') &&
+             (!('userEmail' in data) || data.userEmail is string);
     }
 
     function isValidUserPublic(data) {

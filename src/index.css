@@ -2,31 +2,7 @@
 @import "tailwindcss";
 
 @theme {
-  --animate-glitch: glitch 5s infinite;
   --animate-sheen: sheen 2s infinite;
-}
-
-@keyframes glitch {
-  0%, 90%, 100% {
-    transform: translate(0);
-    text-shadow: none;
-  }
-  92% {
-    transform: translate(-3px, 3px);
-    text-shadow: 3px 0px #E50914, -3px 0px #0ff;
-  }
-  94% {
-    transform: translate(-3px, -3px);
-    text-shadow: 3px 0px #0ff, -3px 0px #E50914;
-  }
-  96% {
-    transform: translate(3px, 3px);
-    text-shadow: -3px 0px #E50914, 3px 0px #0ff;
-  }
-  98% {
-    transform: translate(3px, -3px);
-    text-shadow: -3px 0px #0ff, 3px 0px #E50914;
-  }
 }
 
 @keyframes sheen {
@@ -38,10 +14,15 @@
   }
 }
 
-.glitch-effect {
-  animation: var(--animate-glitch);
-}
-
 .font-bengali {
   font-family: 'Hind Siliguri', sans-serif;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.cursor-blink {
+  animation: blink 0.8s infinite;
 }

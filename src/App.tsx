@@ -48,6 +48,8 @@ interface Withdrawal {
   accountNumber: string;
   status: string;
   createdAt: any;
+  adminEmail?: string;
+  userEmail?: string;
 }
 
 interface ChatMessage {
@@ -486,11 +488,13 @@ export default function App() {
       // Create withdrawal request
       await addDoc(collection(db, 'withdrawals'), {
         uid: user.uid,
+        userEmail: user.email,
         amount: amount,
         method: withdrawMethod,
         accountNumber: accountNumber.trim(),
         status: 'pending',
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        adminEmail: 'sabihait20@gmail.com'
       });
 
       // Deduct balance
@@ -501,7 +505,7 @@ export default function App() {
 
       setWithdrawAmount('');
       setAccountNumber('');
-      alert("Withdrawal request submitted successfully!");
+      alert("Withdrawal request submitted successfully! Your request has been sent to sabihait20@gmail.com for approval.");
     } catch (error) {
       console.error("Error submitting withdrawal:", error);
       alert("Failed to submit withdrawal request.");
