@@ -91,6 +91,7 @@ export default function App() {
   const [editName, setEditName] = useState('');
   const [editPhotoFile, setEditPhotoFile] = useState<File | null>(null);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileUploadProgress, setProfileUploadProgress] = useState(0);
   const profileFileInputRef = useRef<HTMLInputElement>(null);
   
   // Comments state
@@ -385,10 +386,11 @@ export default function App() {
   const handleSaveProfile = async () => {
     if (!user) return;
     setIsSavingProfile(true);
+    setProfileUploadProgress(0);
     try {
       let newPhotoURL = user.photoURL;
       if (editPhotoFile) {
-        newPhotoURL = await uploadToImgBB(editPhotoFile, () => {});
+        newPhotoURL = await uploadToImgBB(editPhotoFile, setProfileUploadProgress);
       }
       
       await updateProfile(user, {
@@ -403,6 +405,14 @@ export default function App() {
         photoURL: newPhotoURL,
         updatedAt: serverTimestamp()
       }, { merge: true });
+
+      // Update public profile for chat
+      const publicUserRef = doc(db, 'users_public', user.uid);
+      await setDoc(publicUserRef, {
+        uid: user.uid,
+        name: editName || user.displayName,
+        photoURL: newPhotoURL
+      }, { merge: true });
       
       setUser({ ...user, displayName: editName || user.displayName, photoURL: newPhotoURL } as User);
       setIsEditingProfile(false);
@@ -412,6 +422,7 @@ export default function App() {
       alert("Failed to update profile");
     } finally {
       setIsSavingProfile(false);
+      setProfileUploadProgress(0);
     }
   };
 
@@ -1040,12 +1051,18 @@ export default function App() {
                     <img 
                       src={editPhotoFile ? URL.createObjectURL(editPhotoFile) : (user.photoURL || `https://ui-avatars.com/api/?name=${user.displayName}`)} 
                       alt="Profile Preview" 
-                      className="w-24 h-24 rounded-full object-cover border-4 border-indigo-900/30"
+                      className={`w-24 h-24 rounded-full object-cover border-4 border-indigo-900/30 ${isSavingProfile ? 'opacity-50' : ''}`}
                       referrerPolicy="no-referrer"
                     />
+                    {isSavingProfile && editPhotoFile && (
+                      <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40">
+                        <span className="text-white font-bold text-sm">{profileUploadProgress}%</span>
+                      </div>
+                    )}
                     <button 
                       onClick={() => profileFileInputRef.current?.click()}
-                      className="absolute bottom-0 right-0 p-1.5 bg-indigo-500 text-white rounded-full hover:bg-indigo-600 transition-colors"
+                      disabled={isSavingProfile}
+                      className="absolute bottom-0 right-0 p-1.5 bg-indigo-500 text-white rounded-full hover:bg-indigo-600 transition-colors disabled:opacity-50"
                     >
                       <Upload size={14} />
                     </button>
@@ -1055,6 +1072,7 @@ export default function App() {
                       className="hidden" 
                       ref={profileFileInputRef}
                       onChange={(e) => setEditPhotoFile(e.target.files?.[0] || null)}
+                      disabled={isSavingProfile}
                     />
                   </div>
 
