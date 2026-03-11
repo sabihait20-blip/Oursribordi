@@ -256,6 +256,15 @@ export default function App() {
     return () => unsubscribe();
   }, [user, selectedChatUser]);
 
+  const handleSignIn = async () => {
+    try {
+      await signInWithGoogle();
+    } catch (error: any) {
+      console.error("Sign in error:", error);
+      alert("Sign in failed: " + (error.message || "Unknown error"));
+    }
+  };
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !selectedChatUser || !newMessage.trim()) return;
@@ -567,7 +576,7 @@ export default function App() {
                 </button>
               </div>
             ) : (
-              <button onClick={signInWithGoogle} className="ml-2 flex items-center gap-2 px-4 py-1.5 bg-indigo-900/30 text-indigo-400 hover:bg-indigo-900/50 rounded-full text-sm font-medium transition-colors">
+              <button onClick={handleSignIn} className="ml-2 flex items-center gap-2 px-4 py-1.5 bg-indigo-900/30 text-indigo-400 hover:bg-indigo-900/50 rounded-full text-sm font-medium transition-colors">
                 <LogIn size={16} />
                 Sign In
               </button>
@@ -1137,7 +1146,7 @@ export default function App() {
           <button 
             onClick={() => {
               if (!user) {
-                signInWithGoogle();
+                handleSignIn();
                 return;
               }
               setActiveTab('wallet');
@@ -1152,7 +1161,7 @@ export default function App() {
             <button 
               onClick={() => {
                 if (!user) {
-                  signInWithGoogle();
+                  handleSignIn();
                   return;
                 }
                 setActiveTab('home');
@@ -1168,7 +1177,7 @@ export default function App() {
           <button 
             onClick={() => {
               if (!user) {
-                signInWithGoogle();
+                handleSignIn();
                 return;
               }
               setActiveTab('messages');
@@ -1181,7 +1190,7 @@ export default function App() {
           <button 
             onClick={() => {
               if (!user) {
-                signInWithGoogle();
+                handleSignIn();
                 return;
               }
               setActiveTab('profile');
