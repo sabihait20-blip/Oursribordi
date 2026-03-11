@@ -4,24 +4,39 @@ import admin from 'firebase-admin';
 import path from 'path';
 
 // Initialize Firebase Admin
-// In a real app, you'd use a service account key. 
-// Here we'll try to use environment variables or default credentials.
 if (!admin.apps.length) {
   try {
-    const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT 
-      ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT) 
-      : undefined;
+    const saVar = process.env.FIREBASE_SERVICE_ACCOUNT;
+    let serviceAccount;
+
+    if (saVar) {
+      try {
+        // Try parsing as direct JSON
+        serviceAccount = JSON.parse(saVar);
+      } catch (e) {
+        try {
+          // Try parsing as base64 encoded JSON (some environments encode secrets)
+          const decoded = Buffer.from(saVar, 'base64').toString();
+          serviceAccount = JSON.parse(decoded);
+        } catch (e2) {
+          console.error('FIREBASE_SERVICE_ACCOUNT is not valid JSON. It seems to start with:', saVar.substring(0, 20));
+          console.error('Please ensure you have pasted the ENTIRE JSON object (including { and }) into the environment variable.');
+        }
+      }
+    }
 
     if (serviceAccount) {
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount)
       });
+      console.log('Firebase Admin initialized with service account');
     } else {
+      // Fallback to application default (works if running in GCP with proper IAM)
       admin.initializeApp({
         credential: admin.credential.applicationDefault()
       });
+      console.log('Firebase Admin initialized with application default credentials');
     }
-    console.log('Firebase Admin initialized');
   } catch (error) {
     console.error('Error initializing Firebase Admin:', error);
   }
