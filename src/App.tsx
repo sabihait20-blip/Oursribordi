@@ -390,7 +390,7 @@ export default function App() {
     setIsSavingProfile(true);
     setProfileUploadProgress(0);
     try {
-      let newPhotoURL = user.photoURL;
+      let newPhotoURL = user.photoURL || '';
       if (editPhotoFile) {
         newPhotoURL = await uploadToImgBB(editPhotoFile, setProfileUploadProgress);
       }
