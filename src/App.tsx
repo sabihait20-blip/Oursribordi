@@ -461,17 +461,23 @@ export default function App() {
 
   const uploadToImgBB = (file: File, onProgress: (progress: number) => void): Promise<string> => {
     return new Promise((resolve, reject) => {
-      const apiKey = import.meta.env.VITE_IMGBB_API_KEY;
-      if (!apiKey) {
-        reject(new Error("ImgBB API Key is missing. Please add VITE_IMGBB_API_KEY to your environment variables."));
+      // Use the provided API key as the primary key, fallback to env if available
+      const apiKey = import.meta.env.VITE_IMGBB_API_KEY || '5a96450548a710e6f8cf39c709ed732a';
+      
+      if (!apiKey || apiKey === 'YOUR_IMGBB_API_KEY') {
+        console.error("ImgBB API Key is missing or placeholder");
+        reject(new Error("ImgBB API Key is missing. Please contact the administrator."));
         return;
       }
 
+      console.log("Starting upload to ImgBB with key:", apiKey.substring(0, 5) + "...");
       const formData = new FormData();
       formData.append('image', file);
 
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', `https://api.imgbb.com/1/upload?key=${apiKey}`);
+      // ImgBB API endpoint
+      const uploadUrl = `https://api.imgbb.com/1/upload?key=${apiKey}`;
+      xhr.open('POST', uploadUrl);
 
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) {
@@ -481,22 +487,35 @@ export default function App() {
       };
 
       xhr.onload = () => {
-        if (xhr.status === 200) {
-          try {
-            const response = JSON.parse(xhr.responseText);
+        console.log("ImgBB Upload Status:", xhr.status);
+        try {
+          const response = JSON.parse(xhr.responseText);
+          if (xhr.status === 200 && response.success) {
+            console.log("ImgBB Upload Success:", response.data.url);
             resolve(response.data.url);
-          } catch (error) {
-            reject(new Error("Failed to parse ImgBB response"));
+          } else {
+            const errorMessage = response.error?.message || `Upload failed (Status ${xhr.status})`;
+            console.error("ImgBB Upload Error Details:", response.error);
+            reject(new Error(errorMessage));
           }
-        } else {
-          reject(new Error(`Upload failed with status ${xhr.status}`));
+        } catch (error) {
+          console.error("Failed to parse ImgBB response:", xhr.responseText);
+          reject(new Error(`Failed to parse server response (Status ${xhr.status})`));
         }
       };
 
       xhr.onerror = () => {
-        reject(new Error("Network error during upload"));
+        console.error("ImgBB XHR Network Error");
+        reject(new Error("Network error during upload. Please check your connection."));
       };
 
+      xhr.ontimeout = () => {
+        console.error("ImgBB XHR Timeout");
+        reject(new Error("Upload timed out. Please try again with a smaller file."));
+      };
+
+      // Set a reasonable timeout (60 seconds)
+      xhr.timeout = 60000;
       xhr.send(formData);
     });
   };
@@ -888,7 +907,6 @@ export default function App() {
                       rows={file ? 2 : 3}
                       value={caption}
                       onChange={(e) => setCaption(e.target.value)}
-                      required
                     />
                     
                     {/* Image Preview Area */}
