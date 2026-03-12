@@ -1,8 +1,22 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
 import path from 'path';
 import fs from 'fs';
+
+let firestoreDatabaseId = '';
+let firebaseProjectId = '';
+try {
+  const configPath = path.resolve('firebase-applet-config.json');
+  if (fs.existsSync(configPath)) {
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    firestoreDatabaseId = config.firestoreDatabaseId || '';
+    firebaseProjectId = config.projectId || '';
+  }
+} catch (e) {
+  console.error('Could not read firebase-applet-config.json:', e);
+}
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
@@ -34,7 +48,8 @@ if (!admin.apps.length) {
     } else {
       // Fallback to application default (works if running in GCP with proper IAM)
       admin.initializeApp({
-        credential: admin.credential.applicationDefault()
+        credential: admin.credential.applicationDefault(),
+        projectId: firebaseProjectId || undefined
       });
       console.log('Firebase Admin initialized with application default credentials');
     }
@@ -113,7 +128,7 @@ async function startServer() {
       
       if (postId && admin.apps.length) {
         try {
-          const db = admin.firestore();
+          const db = firestoreDatabaseId ? getFirestore(admin.app(), firestoreDatabaseId) : admin.firestore();
           const postDoc = await db.collection('posts').doc(postId).get();
           if (postDoc.exists) {
             const postData = postDoc.data();
@@ -160,7 +175,7 @@ async function startServer() {
       
       if (postId && admin.apps.length) {
         try {
-          const db = admin.firestore();
+          const db = firestoreDatabaseId ? getFirestore(admin.app(), firestoreDatabaseId) : admin.firestore();
           const postDoc = await db.collection('posts').doc(postId).get();
           if (postDoc.exists) {
             const postData = postDoc.data();

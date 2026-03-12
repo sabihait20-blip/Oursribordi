@@ -763,11 +763,13 @@ export default function App() {
   };
 
   const handleShare = async (post: Post) => {
-    const url = `${window.location.origin}?post=${post.id}`;
+    // Replace ais-dev- with ais-pre- to ensure the shared link is publicly accessible by social media crawlers
+    const origin = window.location.origin.replace('ais-dev-', 'ais-pre-');
+    const url = `${origin}?post=${post.id}`;
     if (navigator.share) {
       try {
         await navigator.share({
-          title: `Picture by ${post.name}`,
+          title: `Post by ${post.name}`,
           text: post.caption,
           url: url,
         });
