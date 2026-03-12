@@ -639,9 +639,9 @@ export default function App() {
 
   const handlePost = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file) return;
+    if (!file && !caption.trim()) return;
     if (!user) {
-      alert("Please sign in to upload pictures.");
+      alert("Please sign in to post.");
       return;
     }
 
@@ -649,7 +649,10 @@ export default function App() {
     setUploadProgress(0);
 
     try {
-      const imageUrl = await uploadToImgBB(file, setUploadProgress);
+      let imageUrl = '';
+      if (file) {
+        imageUrl = await uploadToImgBB(file, setUploadProgress);
+      }
       
       await addDoc(collection(db, 'posts'), {
         name: name || user.displayName || 'Anonymous',
@@ -673,7 +676,7 @@ export default function App() {
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (error: any) {
       console.error("Upload error:", error);
-      alert(error.message || 'Failed to upload image');
+      alert(error.message || 'Failed to create post');
     } finally {
       setIsUploading(false);
       setUploadProgress(0);
@@ -1127,18 +1130,20 @@ export default function App() {
                 )}
 
                 {/* Post Image */}
-                <div 
-                  className="w-full bg-slate-800/60 cursor-pointer border-y border-slate-800/50"
-                  onClick={() => setSelectedImage(post)}
-                >
-                  <img 
-                    src={post.imageUrl} 
-                    alt={post.caption} 
-                    className="w-full max-h-[600px] object-contain"
-                    loading="lazy"
-                    referrerPolicy="no-referrer"
-                  />
-                </div>
+                {post.imageUrl && (
+                  <div 
+                    className="w-full bg-slate-800/60 cursor-pointer border-y border-slate-800/50"
+                    onClick={() => setSelectedImage(post)}
+                  >
+                    <img 
+                      src={post.imageUrl} 
+                      alt={post.caption} 
+                      className="w-full max-h-[600px] object-contain"
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                )}
 
                 {/* Post Actions */}
                 <div className="p-2 px-4">
@@ -1490,8 +1495,14 @@ export default function App() {
             </h3>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
               {posts.filter(p => p.uid === viewingUserId).map(post => (
-                <div key={post.id} className="aspect-square rounded-xl overflow-hidden bg-slate-800/60 cursor-pointer" onClick={() => setSelectedImage(post)}>
-                  <img src={post.imageUrl} alt={post.caption} className="w-full h-full object-cover" />
+                <div key={post.id} className="aspect-square rounded-xl overflow-hidden bg-slate-800/60 cursor-pointer relative" onClick={() => setSelectedImage(post)}>
+                  {post.imageUrl ? (
+                    <img src={post.imageUrl} alt={post.caption} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full p-4 flex items-center justify-center text-center text-slate-300 bg-slate-800">
+                      <p className="line-clamp-4 text-sm font-medium">{post.caption}</p>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -1818,14 +1829,20 @@ export default function App() {
               className="relative max-w-6xl w-full h-[90vh] flex flex-col md:flex-row bg-[#0f172a]/80 rounded-2xl overflow-hidden shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Left: Image */}
+              {/* Left: Image or Text */}
               <div className="flex-1 bg-black flex items-center justify-center relative min-h-[40vh] md:min-h-0">
-                <img 
-                  src={currentPost.imageUrl} 
-                  alt={currentPost.caption} 
-                  className="max-w-full max-h-full object-contain"
-                  referrerPolicy="no-referrer"
-                />
+                {currentPost.imageUrl ? (
+                  <img 
+                    src={currentPost.imageUrl} 
+                    alt={currentPost.caption} 
+                    className="max-w-full max-h-full object-contain"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <div className="p-8 text-center text-2xl md:text-4xl font-medium text-slate-200 leading-relaxed overflow-y-auto max-h-full w-full flex items-center justify-center">
+                    {currentPost.caption}
+                  </div>
+                )}
               </div>
               
               {/* Right: Sidebar */}

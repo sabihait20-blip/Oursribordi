@@ -2,6 +2,7 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import admin from 'firebase-admin';
 import path from 'path';
+import fs from 'fs';
 
 // Initialize Firebase Admin
 if (!admin.apps.length) {
@@ -100,9 +101,99 @@ async function startServer() {
       server: { middlewareMode: true },
       appType: 'spa',
     });
+    
+    // Intercept HTML requests in dev mode to inject OG tags
+    app.use(async (req, res, next) => {
+      if (req.method !== 'GET' || req.headers.accept?.indexOf('text/html') === -1) {
+        return next();
+      }
+      
+      const postId = req.query.post as string;
+      let ogTags = '';
+      
+      if (postId && admin.apps.length) {
+        try {
+          const db = admin.firestore();
+          const postDoc = await db.collection('posts').doc(postId).get();
+          if (postDoc.exists) {
+            const postData = postDoc.data();
+            const title = postData?.name ? `Post by ${postData.name}` : 'আমাদের শ্রীবরদী';
+            const description = postData?.caption || 'Check out this post on আমাদের শ্রীবরদী';
+            const imageUrl = postData?.imageUrl || 'https://ais-pre-4evteq6f7cam3x5m6neoco-68546391801.asia-southeast1.run.app/firebase-logo.png';
+            
+            ogTags = `
+    <meta property="og:title" content="${title.replace(/"/g, '&quot;')}" />
+    <meta property="og:description" content="${description.replace(/"/g, '&quot;')}" />
+    <meta property="og:image" content="${imageUrl}" />
+    <meta property="og:type" content="article" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="${title.replace(/"/g, '&quot;')}" />
+    <meta name="twitter:description" content="${description.replace(/"/g, '&quot;')}" />
+    <meta name="twitter:image" content="${imageUrl}" />`;
+          }
+        } catch (error) {
+          console.error('Error fetching post for OG tags:', error);
+        }
+      }
+
+      try {
+        let template = fs.readFileSync(path.resolve('index.html'), 'utf-8');
+        template = await vite.transformIndexHtml(req.originalUrl, template);
+        if (ogTags) {
+          template = template.replace('</head>', `${ogTags}\n  </head>`);
+        }
+        res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
+      } catch (e: any) {
+        vite.ssrFixStacktrace(e);
+        next(e);
+      }
+    });
+
     app.use(vite.middlewares);
   } else {
-    app.use(express.static('dist'));
+    // Production mode
+    app.use(express.static('dist', { index: false }));
+    
+    app.get('*', async (req, res) => {
+      const postId = req.query.post as string;
+      let ogTags = '';
+      
+      if (postId && admin.apps.length) {
+        try {
+          const db = admin.firestore();
+          const postDoc = await db.collection('posts').doc(postId).get();
+          if (postDoc.exists) {
+            const postData = postDoc.data();
+            const title = postData?.name ? `Post by ${postData.name}` : 'আমাদের শ্রীবরদী';
+            const description = postData?.caption || 'Check out this post on আমাদের শ্রীবরদী';
+            const imageUrl = postData?.imageUrl || 'https://ais-pre-4evteq6f7cam3x5m6neoco-68546391801.asia-southeast1.run.app/firebase-logo.png';
+            
+            ogTags = `
+    <meta property="og:title" content="${title.replace(/"/g, '&quot;')}" />
+    <meta property="og:description" content="${description.replace(/"/g, '&quot;')}" />
+    <meta property="og:image" content="${imageUrl}" />
+    <meta property="og:type" content="article" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="${title.replace(/"/g, '&quot;')}" />
+    <meta name="twitter:description" content="${description.replace(/"/g, '&quot;')}" />
+    <meta name="twitter:image" content="${imageUrl}" />`;
+          }
+        } catch (error) {
+          console.error('Error fetching post for OG tags:', error);
+        }
+      }
+      
+      try {
+        const indexPath = path.join(process.cwd(), 'dist', 'index.html');
+        let html = fs.readFileSync(indexPath, 'utf-8');
+        if (ogTags) {
+          html = html.replace('</head>', `${ogTags}\n  </head>`);
+        }
+        res.send(html);
+      } catch (error) {
+        res.status(500).send('Error loading application');
+      }
+    });
   }
 
   app.listen(PORT, '0.0.0.0', () => {

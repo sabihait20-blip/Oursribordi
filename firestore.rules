@@ -98,10 +98,10 @@ service cloud.firestore {
     // Domain Validators
     function isValidPost(data) {
       return hasOnlyAllowedFields(['name', 'caption', 'imageUrl', 'createdAt', 'uid', 'visibility', 'likes', 'photoURL']) &&
-             hasRequiredFields(['name', 'caption', 'imageUrl', 'createdAt', 'uid', 'visibility']) &&
+             hasRequiredFields(['name', 'caption', 'createdAt', 'uid', 'visibility']) &&
              validStringLength('name', 1, 50) &&
              validStringLength('caption', 0, 500) &&
-             isValidUrl(data.imageUrl) &&
+             (!('imageUrl' in data) || data.imageUrl == '' || isValidUrl(data.imageUrl)) &&
              data.createdAt is timestamp &&
              data.uid is string &&
              data.uid.size() > 0 && data.uid.size() < 100 &&
