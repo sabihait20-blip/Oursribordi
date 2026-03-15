@@ -666,9 +666,9 @@ export default function App() {
       
       // Increment user balance by 0.10 BDT
       const userRef = doc(db, 'users', user.uid);
-      await updateDoc(userRef, {
+      await setDoc(userRef, {
         balance: increment(0.10)
-      });
+      }, { merge: true });
       
       setCaption('');
       setFile(null);
@@ -976,7 +976,7 @@ export default function App() {
                     
                     <button 
                       type="submit" 
-                      disabled={!file || isUploading}
+                      disabled={(!file && !caption.trim()) || isUploading}
                       className="px-6 py-2 bg-indigo-500 hover:bg-indigo-500 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     >
                       {isUploading ? (
