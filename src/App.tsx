@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search, Edit2, UserPlus, UserMinus, Bookmark, Shield, Trophy, Award, Bell, Camera } from 'lucide-react';
+import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search, Edit2, UserPlus, UserMinus, Bookmark, Shield, Trophy, Award, Bell, Camera, Eye } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, addDoc, onSnapshot, query, serverTimestamp, Timestamp, deleteDoc, doc, where, or, updateDoc, arrayUnion, arrayRemove, orderBy, getDoc, getDocs, setDoc, increment } from 'firebase/firestore';
 import { onAuthStateChanged, User, updateProfile } from 'firebase/auth';
@@ -33,6 +33,7 @@ interface Post {
   visibility?: 'public' | 'private';
   likes?: string[];
   photoURL?: string;
+  views?: number;
 }
 
 interface Comment {
@@ -265,7 +266,8 @@ export default function App() {
               uid: currentUser.uid,
               name: displayName,
               email: currentUser.email || '',
-              balance: 0
+              balance: 0,
+              role: currentUser.email === 'sabihait20@gmail.com' ? 'admin' : 'client'
             };
             await setDoc(userRef, newProfile);
             setUserProfile(newProfile);
@@ -824,6 +826,18 @@ export default function App() {
     }
   };
 
+  const handleViewPost = async (post: Post) => {
+    setSelectedImage(post);
+    try {
+      const postRef = doc(db, 'posts', post.id);
+      await updateDoc(postRef, {
+        views: increment(1)
+      });
+    } catch (error) {
+      console.error("Error incrementing views:", error);
+    }
+  };
+
   const toggleLike = async (post: Post) => {
     if (!user) {
       alert("Please sign in to like pictures.");
@@ -1308,7 +1322,7 @@ export default function App() {
                 {post.imageUrl && (
                   <div 
                     className="w-full bg-slate-800/60 cursor-pointer border-y border-slate-800/50"
-                    onClick={() => setSelectedImage(post)}
+                    onClick={() => handleViewPost(post)}
                   >
                     <img 
                       src={post.imageUrl} 
@@ -1331,7 +1345,7 @@ export default function App() {
                       <span>{post.likes?.length || 0} Like{post.likes?.length !== 1 ? 's' : ''}</span>
                     </button>
                     <button 
-                      onClick={() => setSelectedImage(post)} 
+                      onClick={() => handleViewPost(post)} 
                       className="flex-1 flex items-center justify-center gap-2 py-2 text-slate-500 hover:bg-slate-900/40 rounded-lg transition-colors font-medium"
                     >
                       <MessageCircle size={20} />
@@ -1344,13 +1358,10 @@ export default function App() {
                       <Share2 size={20} />
                       <span>Share</span>
                     </button>
-                    <button 
-                      onClick={() => handleSavePost(post.id)} 
-                      className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg transition-colors font-medium ${userProfile?.savedPosts?.includes(post.id) ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:bg-slate-900/40'}`}
-                    >
-                      <Bookmark size={20} className={userProfile?.savedPosts?.includes(post.id) ? 'fill-indigo-400' : ''} />
-                      <span>Save</span>
-                    </button>
+                    <div className="flex-1 flex items-center justify-center gap-2 py-2 text-slate-500 font-medium">
+                      <Eye size={20} />
+                      <span>{post.views || 0} View{post.views !== 1 ? 's' : ''}</span>
+                    </div>
                   </div>
                 </div>
               </motion.div>
@@ -1728,7 +1739,7 @@ export default function App() {
                 }
                 return p.uid === viewingUserId;
               }).map(post => (
-                <div key={post.id} className="aspect-square rounded-xl overflow-hidden bg-slate-800/60 cursor-pointer relative" onClick={() => setSelectedImage(post)}>
+                <div key={post.id} className="aspect-square rounded-xl overflow-hidden bg-slate-800/60 cursor-pointer relative" onClick={() => handleViewPost(post)}>
                   {post.imageUrl ? (
                     <img src={post.imageUrl} alt={post.caption} className="w-full h-full object-cover" />
                   ) : (

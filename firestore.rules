@@ -97,7 +97,7 @@ service cloud.firestore {
 
     // Domain Validators
     function isValidPost(data) {
-      return hasOnlyAllowedFields(['name', 'caption', 'imageUrl', 'createdAt', 'uid', 'visibility', 'likes', 'photoURL']) &&
+      return hasOnlyAllowedFields(['name', 'caption', 'imageUrl', 'createdAt', 'uid', 'visibility', 'likes', 'photoURL', 'views']) &&
              hasRequiredFields(['name', 'caption', 'createdAt', 'uid', 'visibility']) &&
              validStringLength('name', 1, 50) &&
              validStringLength('caption', 0, 500) &&
@@ -107,7 +107,8 @@ service cloud.firestore {
              data.uid.size() > 0 && data.uid.size() < 100 &&
              (data.visibility == 'public' || data.visibility == 'private') &&
              (!('likes' in data) || data.likes is list) &&
-             (!('photoURL' in data) || data.photoURL is string);
+             (!('photoURL' in data) || data.photoURL is string) &&
+             (!('views' in data) || data.views is number);
     }
 
     function isValidComment(data) {
@@ -294,7 +295,8 @@ service cloud.firestore {
                         isValidPost(request.resource.data) && 
                         uidNotModified() &&
                         request.resource.data.createdAt == resource.data.createdAt) ||
-                       (isAuthenticated() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes']));
+                       (isAuthenticated() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'views'])) ||
+                       (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views']));
                     
       allow delete: if isDocOwner() || isAdmin();
       
