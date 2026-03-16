@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search, Edit2, UserPlus, UserMinus } from 'lucide-react';
+import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search, Edit2, UserPlus, UserMinus, Bookmark, Shield, Trophy, Award, Bell, Camera } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, addDoc, onSnapshot, query, serverTimestamp, Timestamp, deleteDoc, doc, where, or, updateDoc, arrayUnion, arrayRemove, orderBy, getDoc, getDocs, setDoc, increment } from 'firebase/firestore';
 import { onAuthStateChanged, User, updateProfile } from 'firebase/auth';
@@ -12,6 +12,16 @@ import {
   auth,
   messaging
 } from './firebase';
+
+interface Story {
+  id: string;
+  uid: string;
+  name: string;
+  photoURL: string;
+  imageUrl: string;
+  createdAt: any;
+  expiresAt: any;
+}
 
 interface Post {
   id: string;
@@ -40,6 +50,8 @@ interface UserProfile {
   name: string;
   email: string;
   balance: number;
+  savedPosts?: string[];
+  isVerified?: boolean;
 }
 
 interface UserPublicProfile {
@@ -50,6 +62,7 @@ interface UserPublicProfile {
 
 interface Withdrawal {
   id: string;
+  uid: string;
   amount: number;
   method: string;
   accountNumber: string;
@@ -78,6 +91,8 @@ interface ChatConversation {
 
 export default function App() {
   const [posts, setPosts] = useState<Post[]>([]);
+  const [stories, setStories] = useState<Story[]>([]);
+  const [isUploadingStory, setIsUploadingStory] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -105,7 +120,7 @@ export default function App() {
   const [replyingTo, setReplyingTo] = useState<Comment | null>(null);
 
   // New state for tabs and wallet
-  const [activeTab, setActiveTab] = useState<'home' | 'wallet' | 'profile' | 'messages'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'wallet' | 'profile' | 'messages' | 'admin'>('home');
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [withdrawMethod, setWithdrawMethod] = useState('bkash');
@@ -128,6 +143,10 @@ export default function App() {
   const [followersCount, setFollowersCount] = useState(0);
   const [followingCount, setFollowingCount] = useState(0);
   const [isFollowLoading, setIsFollowLoading] = useState(false);
+  const [allWithdrawals, setAllWithdrawals] = useState<Withdrawal[]>([]);
+  const [leaderboard, setLeaderboard] = useState<UserProfile[]>([]);
+  const [profileViewTab, setProfileViewTab] = useState<'posts' | 'saved'>('posts');
+  const isAdmin = user?.email === 'sabihait20@gmail.com';
 
   useEffect(() => {
     setCurrentPage(1);
@@ -255,7 +274,9 @@ export default function App() {
             await setDoc(doc(db, 'users_public', currentUser.uid), {
               uid: currentUser.uid,
               name: displayName,
-              photoURL: currentUser.photoURL || ''
+              photoURL: currentUser.photoURL || '',
+              balance: 0,
+              isVerified: false
             });
           } else {
             setUserProfile(userSnap.data() as UserProfile);
@@ -264,7 +285,9 @@ export default function App() {
             await setDoc(doc(db, 'users_public', currentUser.uid), {
               uid: currentUser.uid,
               name: displayName,
-              photoURL: currentUser.photoURL || ''
+              photoURL: currentUser.photoURL || '',
+              balance: userSnap.data().balance || 0,
+              isVerified: userSnap.data().isVerified || false
             }, { merge: true });
           }
 
@@ -304,6 +327,45 @@ export default function App() {
   useEffect(() => {
     if (!isAuthReady) return;
 
+    // Fetch Leaderboard (Top 10 users by balance)
+    const qLeaderboard = query(collection(db, 'users_public'), orderBy('balance', 'desc'));
+    const unsubLeaderboard = onSnapshot(qLeaderboard, (snapshot) => {
+      const usersData = snapshot.docs.map(doc => ({
+        uid: doc.id,
+        ...doc.data()
+      })) as UserProfile[];
+      setLeaderboard(usersData.slice(0, 10));
+    });
+
+    // Fetch all withdrawals for Admin
+    let unsubAllWithdrawals: (() => void) | undefined;
+    if (isAdmin) {
+      const qAllWithdrawals = query(collection(db, 'withdrawals'), orderBy('createdAt', 'desc'));
+      unsubAllWithdrawals = onSnapshot(qAllWithdrawals, (snapshot) => {
+        const wData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as Withdrawal[];
+        setAllWithdrawals(wData);
+      });
+    }
+
+    const qStories = query(collection(db, 'stories'), orderBy('createdAt', 'desc'));
+    const unsubStories = onSnapshot(qStories, (snapshot) => {
+      const now = new Date();
+      const storiesData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Story[];
+      
+      // Filter out expired stories (24 hours)
+      const activeStories = storiesData.filter(story => {
+        if (!story.expiresAt) return true;
+        return story.expiresAt.toDate() > now;
+      });
+      setStories(activeStories);
+    });
+
     const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -321,8 +383,13 @@ export default function App() {
       console.error("Error fetching posts:", error);
     });
 
-    return () => unsubscribe();
-  }, [isAuthReady, user]);
+    return () => {
+      unsubscribe();
+      unsubLeaderboard();
+      if (unsubAllWithdrawals) unsubAllWithdrawals();
+      unsubStories();
+    };
+  }, [isAuthReady, user, isAdmin]);
 
   useEffect(() => {
     if (!selectedImage) {
@@ -637,6 +704,36 @@ export default function App() {
     }
   };
 
+  const handleStoryUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    setIsUploadingStory(true);
+    try {
+      const imageUrl = await uploadToImgBB(file, () => {});
+      
+      const expiresAt = new Date();
+      expiresAt.setHours(expiresAt.getHours() + 24);
+
+      await addDoc(collection(db, 'stories'), {
+        uid: user.uid,
+        name: userProfile?.name || user.displayName || 'Anonymous',
+        photoURL: userProfile?.photoURL || user.photoURL || '',
+        imageUrl,
+        createdAt: serverTimestamp(),
+        expiresAt: Timestamp.fromDate(expiresAt)
+      });
+      
+    } catch (error: any) {
+      console.error("Story upload error:", error);
+      alert(error.message || 'Failed to upload story');
+    } finally {
+      setIsUploadingStory(false);
+      // Reset input
+      e.target.value = '';
+    }
+  };
+
   const handlePost = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file && !caption.trim()) return;
@@ -667,6 +764,12 @@ export default function App() {
       // Increment user balance by 0.10 BDT
       const userRef = doc(db, 'users', user.uid);
       await setDoc(userRef, {
+        balance: increment(0.10)
+      }, { merge: true });
+      
+      await setDoc(doc(db, 'users_public', user.uid), {
+        uid: user.uid,
+        name: name || user.displayName || 'Anonymous',
         balance: increment(0.10)
       }, { merge: true });
       
@@ -762,6 +865,23 @@ export default function App() {
     }
   };
 
+  const handleSavePost = async (postId: string) => {
+    if (!user || !userProfile) {
+      alert("Please sign in to save posts.");
+      return;
+    }
+    const userRef = doc(db, 'users', user.uid);
+    try {
+      if (userProfile.savedPosts?.includes(postId)) {
+        await updateDoc(userRef, { savedPosts: arrayRemove(postId) });
+      } else {
+        await updateDoc(userRef, { savedPosts: arrayUnion(postId) });
+      }
+    } catch (error) {
+      console.error("Error saving post:", error);
+    }
+  };
+
   const handleShare = async (post: Post) => {
     // Replace ais-dev- with ais-pre- to ensure the shared link is publicly accessible by social media crawlers
     const origin = window.location.origin.replace('ais-dev-', 'ais-pre-');
@@ -817,6 +937,11 @@ export default function App() {
       await updateDoc(userRef, {
         balance: increment(-amount)
       });
+      await setDoc(doc(db, 'users_public', user.uid), {
+        uid: user.uid,
+        name: user.displayName || 'Anonymous',
+        balance: increment(-amount)
+      }, { merge: true });
 
       setWithdrawAmount('');
       setAccountNumber('');
@@ -832,6 +957,9 @@ export default function App() {
                           post.caption?.toLowerCase().includes(searchQuery.toLowerCase());
     
     if (activeTab === 'profile' && viewingUserId) {
+      if (viewingUserId === user?.uid && profileViewTab === 'saved') {
+        return matchesSearch && userProfile?.savedPosts?.includes(post.id);
+      }
       return matchesSearch && post.uid === viewingUserId;
     }
     return matchesSearch;
@@ -893,6 +1021,49 @@ export default function App() {
       <main className="max-w-5xl mx-auto px-4 py-8 pb-24">
         {activeTab === 'home' && (
           <>
+            {/* Stories Section */}
+            <section className="mb-8 max-w-2xl mx-auto">
+              <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide snap-x">
+                {user && (
+                  <div className="flex flex-col items-center gap-2 shrink-0 snap-start">
+                    <div className="relative w-16 h-16 rounded-full border-2 border-slate-700 bg-slate-800 flex items-center justify-center overflow-hidden cursor-pointer hover:opacity-80 transition-opacity">
+                      <img 
+                        src={userProfile?.photoURL || user.photoURL || `https://ui-avatars.com/api/?name=${user.displayName}`} 
+                        alt="Your Story" 
+                        className="w-full h-full object-cover opacity-50"
+                        referrerPolicy="no-referrer"
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        {isUploadingStory ? <Loader2 size={24} className="animate-spin text-white" /> : <Plus size={24} className="text-white" />}
+                      </div>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        className="absolute inset-0 opacity-0 cursor-pointer"
+                        onChange={handleStoryUpload}
+                        disabled={isUploadingStory}
+                      />
+                    </div>
+                    <span className="text-xs font-medium text-slate-400">Add Story</span>
+                  </div>
+                )}
+                
+                {stories.map(story => (
+                  <div key={story.id} className="flex flex-col items-center gap-2 shrink-0 snap-start cursor-pointer group" onClick={() => setSelectedImage({ imageUrl: story.imageUrl, name: story.name, caption: 'Story' } as any)}>
+                    <div className="w-16 h-16 rounded-full border-2 border-indigo-500 p-0.5 group-hover:scale-105 transition-transform">
+                      <img 
+                        src={story.photoURL || `https://ui-avatars.com/api/?name=${story.name}`} 
+                        alt={story.name} 
+                        className="w-full h-full rounded-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+                    <span className="text-xs font-medium text-slate-300 truncate w-16 text-center">{story.name.split(' ')[0]}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+
             {/* Upload Section */}
         {user && (
           <section className="mb-8 max-w-2xl mx-auto">
@@ -1072,18 +1243,20 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-                  {user?.uid === post.uid && (
+                  {(user?.uid === post.uid || isAdmin) && (
                     <div className="flex items-center gap-1">
-                      <button 
-                        onClick={() => {
-                          setEditingPost(post);
-                          setEditCaptionText(post.caption || '');
-                        }}
-                        className="p-2 text-slate-500 hover:text-indigo-400 hover:bg-indigo-50/10 rounded-full transition-colors"
-                        title="Edit caption"
-                      >
-                        <Edit2 size={18} />
-                      </button>
+                      {user?.uid === post.uid && (
+                        <button 
+                          onClick={() => {
+                            setEditingPost(post);
+                            setEditCaptionText(post.caption || '');
+                          }}
+                          className="p-2 text-slate-500 hover:text-indigo-400 hover:bg-indigo-50/10 rounded-full transition-colors"
+                          title="Edit caption"
+                        >
+                          <Edit2 size={18} />
+                        </button>
+                      )}
                       <button 
                         onClick={() => setPostToDelete(post)}
                         className="p-2 text-slate-500 hover:text-red-500 hover:bg-red-50/10 rounded-full transition-colors"
@@ -1170,6 +1343,13 @@ export default function App() {
                     >
                       <Share2 size={20} />
                       <span>Share</span>
+                    </button>
+                    <button 
+                      onClick={() => handleSavePost(post.id)} 
+                      className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg transition-colors font-medium ${userProfile?.savedPosts?.includes(post.id) ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:bg-slate-900/40'}`}
+                    >
+                      <Bookmark size={20} className={userProfile?.savedPosts?.includes(post.id) ? 'fill-indigo-400' : ''} />
+                      <span>Save</span>
                     </button>
                   </div>
                 </div>
@@ -1294,6 +1474,35 @@ export default function App() {
                 </div>
               </div>
             )}
+
+            {/* Leaderboard Section */}
+            <div className="bg-[#0f172a]/80 rounded-2xl shadow-sm border border-slate-800 p-6 mt-8">
+              <div className="flex items-center gap-2 mb-6">
+                <Trophy className="text-yellow-500" size={24} />
+                <h3 className="text-xl font-semibold text-white">Top Earners</h3>
+              </div>
+              <div className="space-y-4">
+                {leaderboard.map((u, index) => (
+                  <div key={u.uid} className="flex items-center justify-between p-3 bg-slate-900/40 rounded-xl border border-slate-800/50">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
+                        index === 0 ? 'bg-yellow-500/20 text-yellow-500' :
+                        index === 1 ? 'bg-slate-400/20 text-slate-300' :
+                        index === 2 ? 'bg-amber-700/20 text-amber-600' :
+                        'bg-slate-800 text-slate-500'
+                      }`}>
+                        #{index + 1}
+                      </div>
+                      <div className="font-medium text-white flex items-center gap-1">
+                        {u.name}
+                        {u.balance > 1000 && <Award size={14} className="text-indigo-400" />}
+                      </div>
+                    </div>
+                    <div className="font-bold text-indigo-400">৳ {u.balance.toFixed(2)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </section>
         )}
 
@@ -1492,11 +1701,33 @@ export default function App() {
               )}
             </div>
 
+            {viewingUserId === user.uid && (
+              <div className="flex justify-center gap-4 mb-6">
+                <button
+                  onClick={() => setProfileViewTab('posts')}
+                  className={`px-6 py-2 rounded-full font-medium transition-colors ${profileViewTab === 'posts' ? 'bg-indigo-500 text-white' : 'bg-slate-800/60 text-slate-400 hover:text-white'}`}
+                >
+                  My Posts
+                </button>
+                <button
+                  onClick={() => setProfileViewTab('saved')}
+                  className={`px-6 py-2 rounded-full font-medium transition-colors ${profileViewTab === 'saved' ? 'bg-indigo-500 text-white' : 'bg-slate-800/60 text-slate-400 hover:text-white'}`}
+                >
+                  Saved Posts
+                </button>
+              </div>
+            )}
+
             <h3 className="text-xl font-semibold text-white mb-4">
-              {viewingUserId === user.uid ? 'Your Posts' : `${viewingUserProfile?.name}'s Posts`}
+              {viewingUserId === user.uid ? (profileViewTab === 'posts' ? 'Your Posts' : 'Saved Posts') : `${viewingUserProfile?.name}'s Posts`}
             </h3>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-              {posts.filter(p => p.uid === viewingUserId).map(post => (
+              {posts.filter(p => {
+                if (viewingUserId === user.uid && profileViewTab === 'saved') {
+                  return userProfile?.savedPosts?.includes(p.id);
+                }
+                return p.uid === viewingUserId;
+              }).map(post => (
                 <div key={post.id} className="aspect-square rounded-xl overflow-hidden bg-slate-800/60 cursor-pointer relative" onClick={() => setSelectedImage(post)}>
                   {post.imageUrl ? (
                     <img src={post.imageUrl} alt={post.caption} className="w-full h-full object-cover" />
@@ -1698,6 +1929,71 @@ export default function App() {
             )}
           </section>
         )}
+        {activeTab === 'admin' && isAdmin && (
+          <section className="max-w-4xl mx-auto">
+            <div className="bg-[#0f172a]/80 rounded-2xl shadow-sm border border-slate-800 p-6 mb-8">
+              <div className="flex items-center gap-3 mb-6">
+                <Shield className="text-indigo-400" size={28} />
+                <h2 className="text-2xl font-bold text-white">Admin Dashboard</h2>
+              </div>
+              
+              <h3 className="text-xl font-semibold text-white mb-4">Pending Withdrawals</h3>
+              {allWithdrawals.filter(w => w.status === 'pending').length === 0 ? (
+                <p className="text-slate-500">No pending withdrawals.</p>
+              ) : (
+                <div className="space-y-4">
+                  {allWithdrawals.filter(w => w.status === 'pending').map(w => (
+                    <div key={w.id} className="flex items-center justify-between p-4 bg-slate-900/40 rounded-xl border border-slate-800/50">
+                      <div>
+                        <div className="font-medium text-white capitalize">{w.method} - {w.accountNumber}</div>
+                        <div className="text-sm text-slate-400">User: {w.userEmail || 'Unknown'}</div>
+                        <div className="text-xs text-slate-500">{w.createdAt?.toDate().toLocaleString()}</div>
+                      </div>
+                      <div className="text-right flex flex-col items-end gap-2">
+                        <div className="font-bold text-white">৳ {w.amount.toFixed(2)}</div>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={async () => {
+                              try {
+                                await updateDoc(doc(db, 'withdrawals', w.id), { status: 'approved' });
+                              } catch (e) {
+                                console.error(e);
+                              }
+                            }}
+                            className="px-3 py-1 bg-green-500/20 text-green-500 rounded-lg text-sm font-medium hover:bg-green-500/30 transition-colors"
+                          >
+                            Approve
+                          </button>
+                          <button 
+                            onClick={async () => {
+                              try {
+                                await updateDoc(doc(db, 'withdrawals', w.id), { status: 'rejected' });
+                                // Refund balance
+                                if (w.uid) {
+                                  await updateDoc(doc(db, 'users', w.uid), { balance: increment(w.amount) });
+                                  await setDoc(doc(db, 'users_public', w.uid), { 
+                                    uid: w.uid,
+                                    name: w.userEmail?.split('@')[0] || 'Anonymous',
+                                    balance: increment(w.amount) 
+                                  }, { merge: true });
+                                }
+                              } catch (e) {
+                                console.error(e);
+                              }
+                            }}
+                            className="px-3 py-1 bg-red-500/20 text-red-500 rounded-lg text-sm font-medium hover:bg-red-500/30 transition-colors"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
       </main>
 
       {/* Bottom Navigation Bar */}
@@ -1767,6 +2063,15 @@ export default function App() {
           >
             <UserIcon size={24} />
           </button>
+
+          {isAdmin && (
+            <button 
+              onClick={() => setActiveTab('admin')}
+              className={`p-2 transition-colors ${activeTab === 'admin' ? 'text-[#38bdf8]' : 'text-slate-500 hover:text-slate-300'}`}
+            >
+              <Shield size={24} />
+            </button>
+          )}
         </div>
       </nav>
 
