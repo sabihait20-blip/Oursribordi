@@ -227,6 +227,29 @@
         }
       },
       "required": ["followerId", "followingId", "createdAt"]
+    },
+    "AdBanner": {
+      "title": "AdBanner",
+      "description": "A banner advertisement displayed in the slideshow.",
+      "type": "object",
+      "properties": {
+        "imageUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "linkUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["imageUrl", "linkUrl", "active", "createdAt"]
     }
   },
   "firestore": {
@@ -277,6 +300,12 @@
         "$ref": "#/entities/Follower"
       },
       "description": "Follower relationships."
+    },
+    "/ad_banners/{bannerId}": {
+      "schema": {
+        "$ref": "#/entities/AdBanner"
+      },
+      "description": "Banner advertisements for the slideshow."
     }
   }
 }

@@ -90,9 +90,19 @@ interface ChatConversation {
   isRead: boolean;
 }
 
+interface AdBanner {
+  id: string;
+  imageUrl: string;
+  linkUrl: string;
+  active: boolean;
+  createdAt: any;
+}
+
 export default function App() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [stories, setStories] = useState<Story[]>([]);
+  const [adBanners, setAdBanners] = useState<AdBanner[]>([]);
+  const [currentAdIndex, setCurrentAdIndex] = useState(0);
   const [isUploadingStory, setIsUploadingStory] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -145,6 +155,11 @@ export default function App() {
   const [followingCount, setFollowingCount] = useState(0);
   const [isFollowLoading, setIsFollowLoading] = useState(false);
   const [allWithdrawals, setAllWithdrawals] = useState<Withdrawal[]>([]);
+  const [allAdBanners, setAllAdBanners] = useState<AdBanner[]>([]);
+  const [newAdLink, setNewAdLink] = useState('');
+  const [newAdFile, setNewAdFile] = useState<File | null>(null);
+  const [isUploadingAd, setIsUploadingAd] = useState(false);
+  const [adUploadProgress, setAdUploadProgress] = useState(0);
   const [leaderboard, setLeaderboard] = useState<UserProfile[]>([]);
   const [profileViewTab, setProfileViewTab] = useState<'posts' | 'saved'>('posts');
   const isAdmin = user?.email === 'sabihait20@gmail.com';
@@ -350,6 +365,15 @@ export default function App() {
         })) as Withdrawal[];
         setAllWithdrawals(wData);
       });
+
+      const unsubAllBanners = onSnapshot(query(collection(db, 'ad_banners'), orderBy('createdAt', 'desc')), (snapshot) => {
+        setAllAdBanners(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as AdBanner)));
+      });
+
+      return () => {
+        unsubAllWithdrawals();
+        unsubAllBanners();
+      };
     }
 
     const qStories = query(collection(db, 'stories'), orderBy('createdAt', 'desc'));
@@ -369,6 +393,10 @@ export default function App() {
     });
 
     const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'));
+
+    const unsubBanners = onSnapshot(query(collection(db, 'ad_banners'), where('active', '==', true), orderBy('createdAt', 'desc')), (snapshot) => {
+      setAdBanners(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as AdBanner)));
+    });
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const postsData = snapshot.docs.map(doc => ({
@@ -390,8 +418,17 @@ export default function App() {
       unsubLeaderboard();
       if (unsubAllWithdrawals) unsubAllWithdrawals();
       unsubStories();
+      unsubBanners();
     };
   }, [isAuthReady, user, isAdmin]);
+
+  useEffect(() => {
+    if (adBanners.length <= 1) return;
+    const interval = setInterval(() => {
+      setCurrentAdIndex((prev) => (prev + 1) % adBanners.length);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [adBanners.length]);
 
   useEffect(() => {
     if (!selectedImage) {
@@ -667,6 +704,49 @@ export default function App() {
     } finally {
       setIsSavingProfile(false);
       setProfileUploadProgress(0);
+    }
+  };
+
+  const handleAddAdBanner = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isAdmin || !newAdFile || !newAdLink.trim()) return;
+
+    setIsUploadingAd(true);
+    setAdUploadProgress(0);
+    try {
+      const imageUrl = await uploadToImgBB(newAdFile, setAdUploadProgress);
+      await addDoc(collection(db, 'ad_banners'), {
+        imageUrl,
+        linkUrl: newAdLink.trim(),
+        active: true,
+        createdAt: serverTimestamp()
+      });
+      setNewAdFile(null);
+      setNewAdLink('');
+    } catch (error) {
+      console.error("Error adding ad banner:", error);
+      alert("Failed to add ad banner");
+    } finally {
+      setIsUploadingAd(false);
+      setAdUploadProgress(0);
+    }
+  };
+
+  const handleDeleteAdBanner = async (id: string) => {
+    if (!isAdmin || !confirm("Are you sure you want to delete this ad?")) return;
+    try {
+      await deleteDoc(doc(db, 'ad_banners', id));
+    } catch (error) {
+      console.error("Error deleting ad banner:", error);
+    }
+  };
+
+  const toggleAdStatus = async (id: string, currentStatus: boolean) => {
+    if (!isAdmin) return;
+    try {
+      await updateDoc(doc(db, 'ad_banners', id), { active: !currentStatus });
+    } catch (error) {
+      console.error("Error toggling ad status:", error);
     }
   };
 
@@ -1035,46 +1115,55 @@ export default function App() {
       <main className="max-w-5xl mx-auto px-4 py-8 pb-24">
         {activeTab === 'home' && (
           <>
-            {/* Stories Section */}
+            {/* Ad Banner Slideshow */}
             <section className="mb-8 max-w-2xl mx-auto">
-              <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide snap-x">
-                {user && (
-                  <div className="flex flex-col items-center gap-2 shrink-0 snap-start">
-                    <div className="relative w-16 h-16 rounded-full border-2 border-slate-700 bg-slate-800 flex items-center justify-center overflow-hidden cursor-pointer hover:opacity-80 transition-opacity">
+              <div className="relative h-48 md:h-64 rounded-2xl overflow-hidden bg-slate-900 shadow-2xl shadow-indigo-500/10 border border-slate-800/50">
+                {adBanners.length > 0 ? (
+                  <AnimatePresence mode="wait">
+                    <motion.a
+                      key={adBanners[currentAdIndex].id}
+                      href={adBanners[currentAdIndex].linkUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      initial={{ opacity: 0, scale: 1.1 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.9 }}
+                      transition={{ duration: 0.8, ease: "easeInOut" }}
+                      className="absolute inset-0 block"
+                    >
                       <img 
-                        src={userProfile?.photoURL || user.photoURL || `https://ui-avatars.com/api/?name=${user.displayName}`} 
-                        alt="Your Story" 
-                        className="w-full h-full object-cover opacity-50"
+                        src={adBanners[currentAdIndex].imageUrl} 
+                        alt="Advertisement" 
+                        className="w-full h-full object-cover"
                         referrerPolicy="no-referrer"
                       />
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        {isUploadingStory ? <Loader2 size={24} className="animate-spin text-white" /> : <Plus size={24} className="text-white" />}
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+                      <div className="absolute bottom-4 left-4 right-4">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 bg-yellow-500 text-black text-[10px] font-bold rounded uppercase tracking-wider">Sponsored</span>
+                        </div>
                       </div>
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        className="absolute inset-0 opacity-0 cursor-pointer"
-                        onChange={handleStoryUpload}
-                        disabled={isUploadingStory}
-                      />
-                    </div>
-                    <span className="text-xs font-medium text-slate-400">Add Story</span>
+                    </motion.a>
+                  </AnimatePresence>
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center text-slate-500 gap-3">
+                    <ImageIcon size={40} className="opacity-20" />
+                    <p className="text-sm font-medium opacity-40">Premium Ad Space Available</p>
                   </div>
                 )}
-                
-                {stories.map(story => (
-                  <div key={story.id} className="flex flex-col items-center gap-2 shrink-0 snap-start cursor-pointer group" onClick={() => setSelectedImage({ imageUrl: story.imageUrl, name: story.name, caption: 'Story' } as any)}>
-                    <div className="w-16 h-16 rounded-full border-2 border-indigo-500 p-0.5 group-hover:scale-105 transition-transform">
-                      <img 
-                        src={story.photoURL || `https://ui-avatars.com/api/?name=${story.name}`} 
-                        alt={story.name} 
-                        className="w-full h-full rounded-full object-cover"
-                        referrerPolicy="no-referrer"
+
+                {/* Indicators */}
+                {adBanners.length > 1 && (
+                  <div className="absolute bottom-4 right-4 flex gap-1.5">
+                    {adBanners.map((_, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => setCurrentAdIndex(idx)}
+                        className={`h-1.5 rounded-full transition-all duration-300 ${currentAdIndex === idx ? 'w-6 bg-white' : 'w-1.5 bg-white/30 hover:bg-white/50'}`}
                       />
-                    </div>
-                    <span className="text-xs font-medium text-slate-300 truncate w-16 text-center">{story.name.split(' ')[0]}</span>
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
             </section>
 
@@ -2002,6 +2091,113 @@ export default function App() {
                   ))}
                 </div>
               )}
+
+              <div className="mt-12">
+                <h3 className="text-xl font-semibold text-white mb-6 flex items-center gap-2">
+                  <ImageIcon size={20} className="text-indigo-400" />
+                  Manage Ad Banners
+                </h3>
+                
+                <form onSubmit={handleAddAdBanner} className="bg-slate-900/40 p-6 rounded-2xl border border-slate-800/50 mb-8">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-400">Banner Image</label>
+                      <div className="relative h-32 rounded-xl border-2 border-dashed border-slate-700 bg-slate-800/50 flex flex-col items-center justify-center overflow-hidden group">
+                        {newAdFile ? (
+                          <>
+                            <img src={URL.createObjectURL(newAdFile)} className="w-full h-full object-cover" />
+                            <button 
+                              type="button"
+                              onClick={() => setNewAdFile(null)}
+                              className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <X size={14} />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <Camera size={24} className="text-slate-500 mb-2" />
+                            <span className="text-xs text-slate-500">Click to upload banner</span>
+                          </>
+                        )}
+                        <input 
+                          type="file" 
+                          accept="image/*" 
+                          onChange={(e) => setNewAdFile(e.target.files?.[0] || null)}
+                          className="absolute inset-0 opacity-0 cursor-pointer"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-400">Target Link URL</label>
+                      <input 
+                        type="url"
+                        placeholder="https://example.com"
+                        value={newAdLink}
+                        onChange={(e) => setNewAdLink(e.target.value)}
+                        className="w-full px-4 py-3 bg-slate-800/60 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                        required
+                      />
+                      <p className="text-[10px] text-slate-500">Users will be redirected to this link when they click the banner.</p>
+                    </div>
+                  </div>
+                  
+                  {isUploadingAd && (
+                    <div className="mb-6">
+                      <div className="flex justify-between text-xs text-slate-400 mb-1.5">
+                        <span>Uploading banner...</span>
+                        <span>{adUploadProgress}%</span>
+                      </div>
+                      <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                        <div className="h-full bg-indigo-500 transition-all duration-300" style={{ width: `${adUploadProgress}%` }} />
+                      </div>
+                    </div>
+                  )}
+
+                  <button 
+                    type="submit"
+                    disabled={isUploadingAd || !newAdFile || !newAdLink.trim()}
+                    className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {isUploadingAd ? <Loader2 size={20} className="animate-spin" /> : <Plus size={20} />}
+                    Add Banner Ad
+                  </button>
+                </form>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {allAdBanners.map(ad => (
+                    <div key={ad.id} className="bg-slate-900/40 rounded-xl border border-slate-800/50 overflow-hidden flex flex-col">
+                      <div className="aspect-video relative">
+                        <img src={ad.imageUrl} className="w-full h-full object-cover" />
+                        <div className="absolute top-2 right-2 flex gap-2">
+                          <button 
+                            onClick={() => toggleAdStatus(ad.id, ad.active)}
+                            className={`p-2 rounded-lg backdrop-blur-md transition-colors ${ad.active ? 'bg-green-500/80 text-white' : 'bg-slate-800/80 text-slate-400'}`}
+                            title={ad.active ? "Deactivate" : "Activate"}
+                          >
+                            <Check size={16} />
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteAdBanner(ad.id)}
+                            className="p-2 bg-red-500/80 text-white rounded-lg backdrop-blur-md hover:bg-red-600 transition-colors"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="p-3">
+                        <div className="text-xs text-slate-400 truncate mb-1">{ad.linkUrl}</div>
+                        <div className="flex justify-between items-center">
+                          <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${ad.active ? 'bg-green-500/20 text-green-500' : 'bg-slate-800 text-slate-500'}`}>
+                            {ad.active ? 'Active' : 'Inactive'}
+                          </span>
+                          <span className="text-[10px] text-slate-500">{ad.createdAt?.toDate().toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </section>
         )}
