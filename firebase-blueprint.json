@@ -96,6 +96,10 @@
         "photoURL": {
           "type": "string"
         },
+        "username": {
+          "type": "string",
+          "description": "Unique username for custom profile URL."
+        },
         "updatedAt": {
           "type": "string",
           "format": "date-time"
@@ -120,6 +124,10 @@
         },
         "photoURL": {
           "type": "string"
+        },
+        "username": {
+          "type": "string",
+          "description": "Unique username for custom profile URL."
         }
       },
       "required": ["uid", "name"]
@@ -306,6 +314,18 @@
         "$ref": "#/entities/AdBanner"
       },
       "description": "Banner advertisements for the slideshow."
+    },
+    "/usernames/{username}": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "uid": {
+            "type": "string"
+          }
+        },
+        "required": ["uid"]
+      },
+      "description": "Mapping of unique usernames to user UIDs."
     }
   }
 }

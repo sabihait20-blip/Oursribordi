@@ -121,11 +121,12 @@ service cloud.firestore {
     }
 
     function isValidUser(data) {
-      return hasOnlyAllowedFields(['uid', 'name', 'email', 'balance', 'photoURL', 'updatedAt', 'fcmToken', 'role', 'savedPosts', 'isVerified']) &&
+      return hasOnlyAllowedFields(['uid', 'name', 'email', 'balance', 'photoURL', 'username', 'updatedAt', 'fcmToken', 'role', 'savedPosts', 'isVerified']) &&
              hasRequiredFields(['uid']) &&
              data.uid is string &&
              (!('balance' in data) || data.balance is number) &&
              (!('photoURL' in data) || data.photoURL is string) &&
+             (!('username' in data) || (data.username is string && data.username.matches("^[a-zA-Z0-9_]{3,20}$"))) &&
              (!('updatedAt' in data) || data.updatedAt is timestamp) &&
              (!('fcmToken' in data) || data.fcmToken is string) &&
              (!('role' in data) || data.role in ['admin', 'client']) &&
@@ -148,12 +149,13 @@ service cloud.firestore {
     }
 
     function isValidUserPublic(data) {
-      return hasOnlyAllowedFields(['uid', 'name', 'photoURL', 'balance', 'isVerified']) &&
+      return hasOnlyAllowedFields(['uid', 'name', 'photoURL', 'username', 'balance', 'isVerified']) &&
              hasRequiredFields(['uid', 'name']) &&
              data.uid is string &&
              data.name is string &&
              validStringLength('name', 1, 50) &&
              (!('photoURL' in data) || data.photoURL is string) &&
+             (!('username' in data) || (data.username is string && data.username.matches("^[a-zA-Z0-9_]{3,20}$"))) &&
              (!('balance' in data) || data.balance is number) &&
              (!('isVerified' in data) || data.isVerified is bool);
     }
@@ -295,6 +297,15 @@ service cloud.firestore {
     match /ad_banners/{bannerId} {
       allow read: if true;
       allow write: if isAdmin();
+    }
+
+    match /usernames/{username} {
+      allow read: if true;
+      allow create: if isAuthenticated() && 
+                    request.resource.data.uid == request.auth.uid && 
+                    username.matches("^[a-zA-Z0-9_]{3,20}$") &&
+                    !exists(/databases/$(database)/documents/usernames/$(username));
+      allow delete: if isAuthenticated() && resource.data.uid == request.auth.uid;
     }
 
     match /posts/{postId} {

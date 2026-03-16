@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import React, { useState, useEffect, useRef } from 'react';
-import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search, Edit2, UserPlus, UserMinus, Bookmark, Shield, Trophy, Award, Bell, Camera, Eye } from 'lucide-react';
+import { BrowserRouter, Routes, Route, useParams, useNavigate, Link } from 'react-router-dom';
+import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search, Edit2, UserPlus, UserMinus, Bookmark, Shield, Trophy, Award, Bell, Camera, Eye, AtSign } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, addDoc, onSnapshot, query, serverTimestamp, Timestamp, deleteDoc, doc, where, or, updateDoc, arrayUnion, arrayRemove, orderBy, getDoc, getDocs, setDoc, increment } from 'firebase/firestore';
 import { onAuthStateChanged, User, updateProfile } from 'firebase/auth';
@@ -30,6 +31,7 @@ interface Post {
   imageUrl: string;
   createdAt: any;
   uid: string;
+  username?: string;
   visibility?: 'public' | 'private';
   likes?: string[];
   photoURL?: string;
@@ -41,6 +43,7 @@ interface Comment {
   text: string;
   uid: string;
   name: string;
+  username?: string;
   photoURL: string;
   createdAt: any;
   replyTo?: string | null;
@@ -51,6 +54,7 @@ interface UserProfile {
   name: string;
   email: string;
   balance: number;
+  username?: string;
   savedPosts?: string[];
   isVerified?: boolean;
 }
@@ -59,6 +63,7 @@ interface UserPublicProfile {
   uid: string;
   name: string;
   photoURL?: string;
+  username?: string;
 }
 
 interface Withdrawal {
@@ -98,7 +103,9 @@ interface AdBanner {
   createdAt: any;
 }
 
-export default function App() {
+function MainApp() {
+  const { username: urlUsername } = useParams();
+  const navigate = useNavigate();
   const [posts, setPosts] = useState<Post[]>([]);
   const [stories, setStories] = useState<Story[]>([]);
   const [adBanners, setAdBanners] = useState<AdBanner[]>([]);
@@ -119,6 +126,9 @@ export default function App() {
   const [visibility, setVisibility] = useState<'public' | 'private'>('public');
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editName, setEditName] = useState('');
+  const [editUsername, setEditUsername] = useState('');
+  const [isCheckingUsername, setIsCheckingUsername] = useState(false);
+  const [usernameError, setUsernameError] = useState('');
   const [editPhotoFile, setEditPhotoFile] = useState<File | null>(null);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileUploadProgress, setProfileUploadProgress] = useState(0);
@@ -163,6 +173,42 @@ export default function App() {
   const [leaderboard, setLeaderboard] = useState<UserProfile[]>([]);
   const [profileViewTab, setProfileViewTab] = useState<'posts' | 'saved'>('posts');
   const isAdmin = user?.email === 'sabihait20@gmail.com';
+
+  const navigateToProfile = (uid: string, username?: string) => {
+    if (username) {
+      navigate(`/${username}`);
+    } else {
+      setViewingUserId(uid);
+      setActiveTab('profile');
+      if (urlUsername) navigate('/');
+    }
+  };
+
+  useEffect(() => {
+    if (urlUsername) {
+      const lookupUsername = async () => {
+        try {
+          const usernameRef = doc(db, 'usernames', urlUsername.toLowerCase());
+          const usernameSnap = await getDoc(usernameRef);
+          if (usernameSnap.exists()) {
+            const targetUid = usernameSnap.data().uid;
+            setViewingUserId(targetUid);
+            setActiveTab('profile');
+          } else {
+            navigate('/');
+          }
+        } catch (error) {
+          console.error("Error looking up username:", error);
+          navigate('/');
+        }
+      };
+      lookupUsername();
+    } else {
+      setViewingUserId(null);
+      // Only reset tab if we were on a profile from URL
+      // if (activeTab === 'profile') setActiveTab('home');
+    }
+  }, [urlUsername]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -626,8 +672,45 @@ export default function App() {
     });
   };
 
+  useEffect(() => {
+    if (!editUsername || editUsername === userProfile?.username) {
+      setUsernameError('');
+      return;
+    }
+
+    if (!/^[a-zA-Z0-9_]{3,20}$/.test(editUsername)) {
+      setUsernameError('Username must be 3-20 characters and only contain letters, numbers, and underscores.');
+      return;
+    }
+
+    const checkUsername = async () => {
+      setIsCheckingUsername(true);
+      try {
+        const usernameRef = doc(db, 'usernames', editUsername.toLowerCase());
+        const usernameSnap = await getDoc(usernameRef);
+        if (usernameSnap.exists()) {
+          setUsernameError('Username is already taken.');
+        } else {
+          setUsernameError('');
+        }
+      } catch (error) {
+        console.error("Error checking username:", error);
+      } finally {
+        setIsCheckingUsername(false);
+      }
+    };
+
+    const timeoutId = setTimeout(checkUsername, 500);
+    return () => clearTimeout(timeoutId);
+  }, [editUsername, userProfile?.username]);
+
   const handleSaveProfile = async () => {
     if (!user) return;
+    if (usernameError) {
+      alert(usernameError);
+      return;
+    }
+
     setIsSavingProfile(true);
     setProfileUploadProgress(0);
     try {
@@ -637,6 +720,18 @@ export default function App() {
       }
       
       const displayName = (editName || user.displayName || 'Anonymous').substring(0, 50);
+      const newUsername = editUsername.toLowerCase();
+      const oldUsername = userProfile?.username;
+
+      // Update username mapping if changed
+      if (newUsername && newUsername !== oldUsername) {
+        // Create new mapping
+        await setDoc(doc(db, 'usernames', newUsername), { uid: user.uid });
+        // Delete old mapping if it existed
+        if (oldUsername) {
+          await deleteDoc(doc(db, 'usernames', oldUsername));
+        }
+      }
       
       await updateProfile(user, {
         displayName: displayName,
@@ -648,6 +743,7 @@ export default function App() {
       await setDoc(userRef, {
         name: displayName,
         photoURL: newPhotoURL,
+        username: newUsername,
         updatedAt: serverTimestamp()
       }, { merge: true });
 
@@ -656,7 +752,8 @@ export default function App() {
       await setDoc(publicUserRef, {
         uid: user.uid,
         name: displayName,
-        photoURL: newPhotoURL
+        photoURL: newPhotoURL,
+        username: newUsername
       }, { merge: true });
       
       setUser({ ...user, displayName: displayName, photoURL: newPhotoURL } as User);
@@ -801,6 +898,7 @@ export default function App() {
         uid: user.uid,
         name: userProfile?.name || user.displayName || 'Anonymous',
         photoURL: userProfile?.photoURL || user.photoURL || '',
+        username: userProfile?.username || '',
         imageUrl,
         createdAt: serverTimestamp(),
         expiresAt: Timestamp.fromDate(expiresAt)
@@ -839,6 +937,7 @@ export default function App() {
         imageUrl,
         createdAt: serverTimestamp(),
         uid: user.uid,
+        username: userProfile?.username || '',
         visibility,
         photoURL: user.photoURL || ''
       });
@@ -947,6 +1046,7 @@ export default function App() {
         text: commentText.trim(),
         uid: user.uid,
         name: user.displayName || 'Anonymous',
+        username: userProfile?.username || '',
         photoURL: user.photoURL || '',
         createdAt: serverTimestamp(),
         replyTo: replyingTo?.id || null
@@ -973,6 +1073,26 @@ export default function App() {
       }
     } catch (error) {
       console.error("Error saving post:", error);
+    }
+  };
+
+  const handleShareProfile = async (uid: string, name: string, username?: string) => {
+    const origin = window.location.origin.replace('ais-dev-', 'ais-pre-');
+    const url = username ? `${origin}/${username}` : `${origin}?user=${uid}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `${name}'s Profile`,
+          url: url,
+        });
+      } catch (error: any) {
+        if (error.name !== 'AbortError' && !error.message?.includes('canceled')) {
+          console.error("Error sharing profile:", error);
+        }
+      }
+    } else {
+      navigator.clipboard.writeText(url);
+      alert("Profile link copied to clipboard!");
     }
   };
 
@@ -1292,10 +1412,7 @@ export default function App() {
                 <div className="p-4 flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <button 
-                      onClick={() => {
-                        setViewingUserId(post.uid);
-                        setActiveTab('profile');
-                      }}
+                      onClick={() => navigateToProfile(post.uid, post.username)}
                       className="flex-shrink-0 focus:outline-none"
                     >
                       {post.photoURL ? (
@@ -1314,10 +1431,7 @@ export default function App() {
                     <div>
                       <div className="flex items-center gap-2">
                         <button 
-                          onClick={() => {
-                            setViewingUserId(post.uid);
-                            setActiveTab('profile');
-                          }}
+                          onClick={() => navigateToProfile(post.uid, post.username)}
                           className="font-semibold text-white hover:text-indigo-400 transition-colors focus:outline-none text-left"
                         >
                           {post.name}
@@ -1650,6 +1764,9 @@ export default function App() {
                       />
                     </div>
                     <h2 className="text-2xl font-bold text-white">{user.displayName}</h2>
+                    {userProfile?.username && (
+                      <p className="text-indigo-400 font-medium mb-1">@{userProfile.username}</p>
+                    )}
                     <p className="text-slate-500 mb-4">{user.email}</p>
                     
                     <div className="flex justify-center gap-6 mb-6 text-slate-300">
@@ -1663,13 +1780,22 @@ export default function App() {
                       </div>
                     </div>
 
-                    <button 
-                      onClick={logOut}
-                      className="inline-flex items-center gap-2 px-6 py-2 bg-slate-800/60 text-slate-300 rounded-full font-medium hover:bg-slate-700/60 transition-colors"
-                    >
-                      <LogOut size={18} />
-                      Sign Out
-                    </button>
+                    <div className="flex justify-center gap-3">
+                      <button 
+                        onClick={logOut}
+                        className="inline-flex items-center gap-2 px-6 py-2 bg-slate-800/60 text-slate-300 rounded-full font-medium hover:bg-slate-700/60 transition-colors"
+                      >
+                        <LogOut size={18} />
+                        Sign Out
+                      </button>
+                      <button 
+                        onClick={() => handleShareProfile(user.uid, userProfile?.name || user.displayName || 'Anonymous', userProfile?.username)}
+                        className="p-2 bg-slate-800/60 text-slate-300 rounded-full hover:bg-slate-700/60 transition-colors"
+                        title="Share Profile"
+                      >
+                        <Share2 size={18} />
+                      </button>
+                    </div>
                   </>
                 ) : (
                   <div className="space-y-4 max-w-sm mx-auto">
@@ -1715,6 +1841,33 @@ export default function App() {
                       />
                     </div>
 
+                    <div>
+                      <label className="block text-sm font-medium text-slate-400 mb-1 text-left">Username</label>
+                      <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                          <AtSign size={16} className="text-slate-500" />
+                        </div>
+                        <input 
+                          type="text" 
+                          value={editUsername}
+                          onChange={(e) => setEditUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
+                          className={`w-full pl-10 pr-4 py-2 bg-slate-900 border ${usernameError ? 'border-red-500' : 'border-slate-700'} rounded-lg text-white focus:outline-none focus:border-indigo-500`}
+                          placeholder="username"
+                        />
+                        {isCheckingUsername && (
+                          <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
+                            <Loader2 size={16} className="animate-spin text-indigo-500" />
+                          </div>
+                        )}
+                      </div>
+                      {usernameError && (
+                        <p className="text-xs text-red-500 mt-1 text-left">{usernameError}</p>
+                      )}
+                      {!usernameError && editUsername && !isCheckingUsername && (
+                        <p className="text-xs text-green-500 mt-1 text-left">Username is available!</p>
+                      )}
+                    </div>
+
                     <div className="flex gap-3 pt-4">
                       <button 
                         onClick={() => {
@@ -1748,7 +1901,10 @@ export default function App() {
                         referrerPolicy="no-referrer"
                       />
                     </div>
-                    <h2 className="text-2xl font-bold text-white mb-4">{viewingUserProfile.name}</h2>
+                    <h2 className="text-2xl font-bold text-white">{viewingUserProfile.name}</h2>
+                    {viewingUserProfile.username && (
+                      <p className="text-indigo-400 font-medium mb-4">@{viewingUserProfile.username}</p>
+                    )}
                     
                     <div className="flex justify-center gap-6 mb-6 text-slate-300">
                       <div className="text-center">
@@ -1794,6 +1950,13 @@ export default function App() {
                             Follow
                           </>
                         )}
+                      </button>
+                      <button 
+                        onClick={() => handleShareProfile(viewingUserProfile.uid, viewingUserProfile.name, viewingUserProfile.username)}
+                        className="p-2 bg-slate-800/60 text-slate-300 rounded-full hover:bg-slate-700/60 transition-colors"
+                        title="Share Profile"
+                      >
+                        <Share2 size={18} />
                       </button>
                     </div>
                   </>
@@ -2263,8 +2426,7 @@ export default function App() {
                 handleSignIn();
                 return;
               }
-              setViewingUserId(user.uid);
-              setActiveTab('profile');
+              navigateToProfile(user.uid, userProfile?.username);
             }}
             className={`p-2 transition-colors ${activeTab === 'profile' ? 'text-[#38bdf8]' : 'text-slate-500 hover:text-slate-300'}`}
           >
@@ -2383,8 +2545,7 @@ export default function App() {
                   <div className="flex gap-3">
                     <button 
                       onClick={() => {
-                        setViewingUserId(currentPost.uid);
-                        setActiveTab('profile');
+                        navigateToProfile(currentPost.uid, currentPost.username);
                         setSelectedImage(null);
                       }}
                       className="shrink-0 focus:outline-none"
@@ -2400,8 +2561,7 @@ export default function App() {
                     <div className="flex-1">
                       <button 
                         onClick={() => {
-                          setViewingUserId(currentPost.uid);
-                          setActiveTab('profile');
+                          navigateToProfile(currentPost.uid, currentPost.username);
                           setSelectedImage(null);
                         }}
                         className="font-medium text-white mr-2 hover:text-indigo-400 transition-colors focus:outline-none"
@@ -2462,8 +2622,7 @@ export default function App() {
                         <div className="flex gap-3">
                           <button 
                             onClick={() => {
-                              setViewingUserId(comment.uid);
-                              setActiveTab('profile');
+                              navigateToProfile(comment.uid, comment.username);
                               setSelectedImage(null);
                             }}
                             className="shrink-0 focus:outline-none"
@@ -2479,8 +2638,7 @@ export default function App() {
                           <div>
                             <button 
                               onClick={() => {
-                                setViewingUserId(comment.uid);
-                                setActiveTab('profile');
+                                navigateToProfile(comment.uid, comment.username);
                                 setSelectedImage(null);
                               }}
                               className="font-medium text-white mr-2 hover:text-indigo-400 transition-colors focus:outline-none"
@@ -2499,8 +2657,7 @@ export default function App() {
                           <div key={reply.id} className="flex gap-3 ml-11">
                             <button 
                               onClick={() => {
-                                setViewingUserId(reply.uid);
-                                setActiveTab('profile');
+                                navigateToProfile(reply.uid, reply.username);
                                 setSelectedImage(null);
                               }}
                               className="shrink-0 focus:outline-none"
@@ -2516,8 +2673,7 @@ export default function App() {
                             <div>
                               <button 
                                 onClick={() => {
-                                  setViewingUserId(reply.uid);
-                                  setActiveTab('profile');
+                                  navigateToProfile(reply.uid, reply.username);
                                   setSelectedImage(null);
                                 }}
                                 className="font-medium text-white mr-2 hover:text-indigo-400 transition-colors focus:outline-none"
@@ -2591,5 +2747,16 @@ export default function App() {
         })()}
       </AnimatePresence>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<MainApp />} />
+        <Route path="/:username" element={<MainApp />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
