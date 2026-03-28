@@ -91,39 +91,43 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          (request.auth.token.email == "sabihait20@gmail.com" && request.auth.token.email_verified == true));
+        (('email' in request.auth.token && request.auth.token.email.lower() == "sabihait20@gmail.com") ||
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
     }
 
     // Domain Validators
     function isValidPost(data) {
-      return hasOnlyAllowedFields(['name', 'caption', 'imageUrl', 'createdAt', 'uid', 'visibility', 'likes', 'photoURL', 'views']) &&
+      return hasOnlyAllowedFields(['name', 'caption', 'imageUrl', 'createdAt', 'uid', 'visibility', 'likes', 'photoURL', 'views', 'username']) &&
              hasRequiredFields(['name', 'caption', 'createdAt', 'uid', 'visibility']) &&
-             validStringLength('name', 1, 50) &&
-             validStringLength('caption', 0, 500) &&
+             validStringLength('name', 1, 100) &&
+             validStringLength('caption', 0, 1000) &&
              (!('imageUrl' in data) || data.imageUrl == '' || isValidUrl(data.imageUrl)) &&
              data.createdAt is timestamp &&
              data.uid is string &&
-             data.uid.size() > 0 && data.uid.size() < 100 &&
+             data.uid.size() > 0 && data.uid.size() < 128 &&
              (data.visibility == 'public' || data.visibility == 'private') &&
              (!('likes' in data) || data.likes is list) &&
              (!('photoURL' in data) || data.photoURL is string) &&
-             (!('views' in data) || data.views is number);
+             (!('views' in data) || data.views is number) &&
+             (!('username' in data) || data.username is string);
     }
 
     function isValidComment(data) {
-      return hasOnlyAllowedFields(['text', 'uid', 'name', 'photoURL', 'createdAt', 'replyTo']) &&
+      return hasOnlyAllowedFields(['text', 'uid', 'name', 'photoURL', 'createdAt', 'replyTo', 'username']) &&
              hasRequiredFields(['text', 'uid', 'name', 'createdAt']) &&
-             validStringLength('text', 1, 1000) &&
-             validStringLength('name', 1, 50) &&
+             validStringLength('text', 1, 2000) &&
+             validStringLength('name', 1, 100) &&
              data.uid is string &&
-             data.createdAt is timestamp;
+             data.createdAt is timestamp &&
+             (!('username' in data) || data.username is string);
     }
 
     function isValidUser(data) {
       return hasOnlyAllowedFields(['uid', 'name', 'email', 'balance', 'photoURL', 'username', 'updatedAt', 'fcmToken', 'role', 'savedPosts', 'isVerified']) &&
              hasRequiredFields(['uid']) &&
              data.uid is string &&
+             (!('name' in data) || (data.name is string && data.name.size() <= 100)) &&
+             (!('email' in data) || data.email is string) &&
              (!('balance' in data) || data.balance is number) &&
              (!('photoURL' in data) || data.photoURL is string) &&
              (!('username' in data) || (data.username is string && data.username.matches("^[a-zA-Z0-9_]{3,20}$"))) &&
@@ -153,7 +157,7 @@ service cloud.firestore {
              hasRequiredFields(['uid', 'name']) &&
              data.uid is string &&
              data.name is string &&
-             validStringLength('name', 1, 50) &&
+             validStringLength('name', 1, 100) &&
              (!('photoURL' in data) || data.photoURL is string) &&
              (!('username' in data) || (data.username is string && data.username.matches("^[a-zA-Z0-9_]{3,20}$"))) &&
              (!('balance' in data) || data.balance is number) &&
@@ -211,9 +215,23 @@ service cloud.firestore {
              (!('postId' in data) || data.postId is string);
     }
 
+    function isValidGlobalNotification(data) {
+      return hasOnlyAllowedFields(['title', 'body', 'createdAt', 'senderId']) &&
+             hasRequiredFields(['title', 'body', 'createdAt', 'senderId']) &&
+             validStringLength('title', 1, 100) &&
+             validStringLength('body', 1, 1000) &&
+             data.createdAt is timestamp &&
+             data.senderId is string;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
+
+    match /global_notifications/{notificationId} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidGlobalNotification(request.resource.data);
+    }
 
     match /stories/{storyId} {
       allow read: if true;
@@ -248,7 +266,7 @@ service cloud.firestore {
 
     match /users_public/{userId} {
       allow read: if true;
-      allow create, update: if isOwner(userId) && isValidUserPublic(request.resource.data) && uidUnchanged();
+      allow write: if (isOwner(userId) && isValidUserPublic(request.resource.data)) || isAdmin();
     }
 
     match /chats/{chatId} {
@@ -271,19 +289,17 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow read: if isOwner(userId) || isAdmin();
       allow create: if isOwner(userId) && 
                     isValidUser(request.resource.data) && 
                     uidUnchanged() && 
-                    (request.resource.data.role == 'client' || isAdmin());
-      allow update: if isOwner(userId) && 
+                    (!('role' in request.resource.data) || 
+                     request.resource.data.role == 'client' || 
+                     ('email' in request.auth.token && request.auth.token.email.lower() == "sabihait20@gmail.com"));
+      allow update: if (isOwner(userId) || isAdmin()) && 
                     isValidUser(request.resource.data) && 
                     uidNotModified() && 
-                    (
-                      (!('role' in request.resource.data) && !('role' in resource.data)) ||
-                      (('role' in request.resource.data) && ('role' in resource.data) && request.resource.data.role == resource.data.role) || 
-                      isAdmin()
-                    );
+                    (isAdmin() || (request.resource.data.role == resource.data.role || !('role' in resource.data)));
     }
 
     match /withdrawals/{withdrawalId} {

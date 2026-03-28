@@ -107,6 +107,19 @@
         "fcmToken": {
           "type": "string",
           "description": "Firebase Cloud Messaging token for push notifications."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "client"]
+        },
+        "savedPosts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "isVerified": {
+          "type": "boolean"
         }
       },
       "required": ["uid"]
@@ -128,6 +141,12 @@
         "username": {
           "type": "string",
           "description": "Unique username for custom profile URL."
+        },
+        "balance": {
+          "type": "number"
+        },
+        "isVerified": {
+          "type": "boolean"
         }
       },
       "required": ["uid", "name"]

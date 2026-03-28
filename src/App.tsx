@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, ErrorInfo, ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, useParams, useNavigate, Link } from 'react-router-dom';
-import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search, Edit2, UserPlus, UserMinus, Bookmark, Shield, Trophy, Award, Bell, Camera, Eye, AtSign } from 'lucide-react';
+import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search, Edit2, UserPlus, UserMinus, Bookmark, Shield, Trophy, Award, Bell, Camera, Eye, AtSign, ShoppingBag, Store, ShoppingCart, Users, BarChart3, Megaphone, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, addDoc, onSnapshot, query, serverTimestamp, Timestamp, deleteDoc, doc, where, or, updateDoc, arrayUnion, arrayRemove, orderBy, getDoc, getDocs, setDoc, increment } from 'firebase/firestore';
 import { onAuthStateChanged, User, updateProfile } from 'firebase/auth';
@@ -53,7 +53,9 @@ interface UserProfile {
   uid: string;
   name: string;
   email: string;
+  photoURL?: string;
   balance: number;
+  role: 'admin' | 'client';
   username?: string;
   savedPosts?: string[];
   isVerified?: boolean;
@@ -101,6 +103,108 @@ interface AdBanner {
   linkUrl: string;
   active: boolean;
   createdAt: any;
+}
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+class ErrorBoundary extends React.Component<{ children: ReactNode }, { hasError: boolean, error: Error | null }> {
+  state: { hasError: boolean, error: Error | null } = { hasError: false, error: null };
+
+  constructor(props: { children: ReactNode }) {
+    super(props);
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("ErrorBoundary caught an error", error, errorInfo);
+  }
+
+  render() {
+    const { hasError, error } = this.state;
+    if (hasError) {
+      let errorMessage = "Something went wrong.";
+      try {
+        const parsedError = JSON.parse(error?.message || "");
+        if (parsedError.error) {
+          errorMessage = `Firestore Error: ${parsedError.error} (${parsedError.operationType} on ${parsedError.path})`;
+        }
+      } catch (e) {
+        errorMessage = error?.message || errorMessage;
+      }
+
+      return (
+        <div className="min-h-screen bg-[#020617] flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 p-8 rounded-2xl max-w-md w-full text-center shadow-2xl">
+            <Shield className="text-red-500 mx-auto mb-4" size={48} />
+            <h1 className="text-2xl font-bold text-white mb-2">Application Error</h1>
+            <p className="text-slate-400 mb-6 text-sm leading-relaxed">
+              {errorMessage}
+            </p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-600/20"
+            >
+              Reload Application
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (this as any).props.children;
+  }
 }
 
 function MainApp() {
@@ -165,6 +269,23 @@ function MainApp() {
   const [followingCount, setFollowingCount] = useState(0);
   const [isFollowLoading, setIsFollowLoading] = useState(false);
   const [allWithdrawals, setAllWithdrawals] = useState<Withdrawal[]>([]);
+  const [adminUsers, setAdminUsers] = useState<UserProfile[]>([]);
+  const [adminSearchQuery, setAdminSearchQuery] = useState('');
+  const [isEditingUserBalance, setIsEditingUserBalance] = useState<string | null>(null);
+  const [newUserBalance, setNewUserBalance] = useState(0);
+  const [adminActiveSubTab, setAdminActiveSubTab] = useState<'withdrawals' | 'users' | 'posts' | 'ads'>('withdrawals');
+  const [globalNotifications, setGlobalNotifications] = useState<any[]>([]);
+  const [adminStats, setAdminStats] = useState({
+    totalUsers: 0,
+    totalBalance: 0,
+    pendingWithdrawals: 0,
+    totalWithdrawals: 0,
+    totalPosts: 0
+  });
+  const [allPosts, setAllPosts] = useState<Post[]>([]);
+  const [adminNotificationTitle, setAdminNotificationTitle] = useState('');
+  const [adminNotificationBody, setAdminNotificationBody] = useState('');
+  const [isSendingNotification, setIsSendingNotification] = useState(false);
   const [allAdBanners, setAllAdBanners] = useState<AdBanner[]>([]);
   const [newAdLink, setNewAdLink] = useState('');
   const [newAdFile, setNewAdFile] = useState<File | null>(null);
@@ -172,7 +293,7 @@ function MainApp() {
   const [adUploadProgress, setAdUploadProgress] = useState(0);
   const [leaderboard, setLeaderboard] = useState<UserProfile[]>([]);
   const [profileViewTab, setProfileViewTab] = useState<'posts' | 'saved'>('posts');
-  const isAdmin = user?.email === 'sabihait20@gmail.com';
+  const isAdmin = user?.email === 'sabihait20@gmail.com' || userProfile?.role === 'admin';
 
   const navigateToProfile = (uid: string, username?: string) => {
     if (username) {
@@ -268,14 +389,20 @@ function MainApp() {
         try {
           const permission = await Notification.requestPermission();
           if (permission === 'granted') {
-            const token = await getToken(messaging, {
-              vapidKey: 'BId_z_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X_X' 
-            });
-            if (token) {
-              console.log('FCM Token:', token);
-              await setDoc(doc(db, 'users', user.uid), {
-                fcmToken: token
-              }, { merge: true });
+            // Only attempt to get token if a valid-looking VAPID key is provided
+            // The previous placeholder was causing an 'atob' error
+            const vapidKey = ''; // User needs to provide a real VAPID key from Firebase Console
+            if (vapidKey) {
+              const token = await getToken(messaging, {
+                vapidKey: vapidKey
+              });
+              if (token) {
+                console.log('FCM Token:', token);
+                await setDoc(doc(db, 'users', user.uid), {
+                  uid: user.uid, // Ensure uid is included for security rules
+                  fcmToken: token
+                }, { merge: true });
+              }
             }
           }
         } catch (error) {
@@ -317,58 +444,95 @@ function MainApp() {
       
       if (currentUser) {
         try {
+          console.log("Setting up profile for:", currentUser.uid);
           // Create or get user profile
           const userRef = doc(db, 'users', currentUser.uid);
-          const userSnap = await getDoc(userRef);
+          let userSnap;
+          try {
+            console.log("Fetching user document...");
+            userSnap = await getDoc(userRef);
+            console.log("User document fetched. Exists:", userSnap.exists());
+          } catch (e) {
+            console.error("Error fetching user document:", e);
+            handleFirestoreError(e, OperationType.GET, `users/${currentUser.uid}`);
+          }
           
-          if (!userSnap.exists()) {
-            const displayName = (currentUser.displayName || 'Anonymous').substring(0, 50);
-            const newProfile = {
+          if (!userSnap?.exists()) {
+            const displayName = (currentUser.displayName || 'Anonymous').substring(0, 100);
+            const newProfile: UserProfile = {
               uid: currentUser.uid,
               name: displayName,
               email: currentUser.email || '',
               balance: 0,
               role: currentUser.email === 'sabihait20@gmail.com' ? 'admin' : 'client'
             };
-            await setDoc(userRef, newProfile);
+            try {
+              console.log("Creating new user profile:", newProfile);
+              await setDoc(userRef, newProfile);
+              console.log("User profile created.");
+            } catch (e) {
+              console.error("Error creating user profile:", e);
+              handleFirestoreError(e, OperationType.CREATE, `users/${currentUser.uid}`);
+            }
             setUserProfile(newProfile);
             
             // Create public profile for chat
-            await setDoc(doc(db, 'users_public', currentUser.uid), {
-              uid: currentUser.uid,
-              name: displayName,
-              photoURL: currentUser.photoURL || '',
-              balance: 0,
-              isVerified: false
-            });
+            try {
+              console.log("Creating public profile...");
+              await setDoc(doc(db, 'users_public', currentUser.uid), {
+                uid: currentUser.uid,
+                name: displayName,
+                photoURL: currentUser.photoURL || '',
+                balance: 0,
+                isVerified: false
+              });
+              console.log("Public profile created.");
+            } catch (e) {
+              console.error("Error creating public profile:", e);
+              handleFirestoreError(e, OperationType.CREATE, `users_public/${currentUser.uid}`);
+            }
           } else {
-            setUserProfile(userSnap.data() as UserProfile);
-            const displayName = (currentUser.displayName || 'Anonymous').substring(0, 50);
+            const data = userSnap.data() as UserProfile;
+            setUserProfile(data);
+            const displayName = (currentUser.displayName || 'Anonymous').substring(0, 100);
             // Ensure public profile exists
-            await setDoc(doc(db, 'users_public', currentUser.uid), {
+            const publicData: any = {
               uid: currentUser.uid,
               name: displayName,
               photoURL: currentUser.photoURL || '',
-              balance: userSnap.data().balance || 0,
-              isVerified: userSnap.data().isVerified || false
-            }, { merge: true });
+              balance: data.balance || 0,
+              isVerified: data.isVerified || false
+            };
+            try {
+              console.log("Updating public profile:", publicData);
+              await setDoc(doc(db, 'users_public', currentUser.uid), publicData, { merge: true });
+              console.log("Public profile updated.");
+            } catch (e) {
+              console.error("Error updating public profile:", e);
+              handleFirestoreError(e, OperationType.UPDATE, `users_public/${currentUser.uid}`);
+            }
           }
 
           // Listen to profile changes
+          console.log("Setting up profile snapshot listener...");
           profileUnsub = onSnapshot(userRef, (doc) => {
             if (doc.exists()) {
-              setUserProfile(doc.data() as UserProfile);
+              const data = doc.data() as UserProfile;
+              setUserProfile(data);
             }
           }, (error) => {
             console.error("Profile snapshot error:", error);
+            handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
           });
 
           // Listen to withdrawals
+          console.log("Setting up withdrawals snapshot listener...");
           const wQuery = query(collection(db, 'withdrawals'), where('uid', '==', currentUser.uid), orderBy('createdAt', 'desc'));
           wUnsub = onSnapshot(wQuery, (snapshot) => {
             setWithdrawals(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Withdrawal)));
           }, (error) => {
             console.error("Withdrawals snapshot error:", error);
+            handleFirestoreError(error, OperationType.LIST, 'withdrawals');
           });
 
         } catch (error) {
@@ -410,15 +574,53 @@ function MainApp() {
           ...doc.data()
         })) as Withdrawal[];
         setAllWithdrawals(wData);
+        
+        // Update Stats
+        const pending = wData.filter(w => w.status === 'pending').length;
+        setAdminStats(prev => ({
+          ...prev,
+          pendingWithdrawals: pending,
+          totalWithdrawals: wData.length
+        }));
       });
 
       const unsubAllBanners = onSnapshot(query(collection(db, 'ad_banners'), orderBy('createdAt', 'desc')), (snapshot) => {
         setAllAdBanners(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as AdBanner)));
       });
 
+      const unsubAdminUsers = onSnapshot(query(collection(db, 'users'), orderBy('balance', 'desc')), (snapshot) => {
+        const users = snapshot.docs.map(doc => ({
+          uid: doc.id,
+          ...doc.data()
+        })) as UserProfile[];
+        setAdminUsers(users);
+        
+        // Update Stats
+        const totalBal = users.reduce((acc, u) => acc + (u.balance || 0), 0);
+        setAdminStats(prev => ({
+          ...prev,
+          totalUsers: users.length,
+          totalBalance: totalBal
+        }));
+      });
+
+      const unsubAdminPosts = onSnapshot(query(collection(db, 'posts'), orderBy('createdAt', 'desc')), (snapshot) => {
+        const postsData = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        })) as Post[];
+        setAllPosts(postsData);
+        setAdminStats(prev => ({
+          ...prev,
+          totalPosts: postsData.length
+        }));
+      });
+
       return () => {
-        unsubAllWithdrawals();
-        unsubAllBanners();
+        unsubAllWithdrawals?.();
+        unsubAllBanners?.();
+        unsubAdminUsers?.();
+        unsubAdminPosts?.();
       };
     }
 
@@ -436,6 +638,10 @@ function MainApp() {
         return story.expiresAt.toDate() > now;
       });
       setStories(activeStories);
+    });
+
+    const unsubGlobalNotifications = onSnapshot(query(collection(db, 'global_notifications'), orderBy('createdAt', 'desc')), (snapshot) => {
+      setGlobalNotifications(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
     const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'));
@@ -465,6 +671,7 @@ function MainApp() {
       if (unsubAllWithdrawals) unsubAllWithdrawals();
       unsubStories();
       unsubBanners();
+      unsubGlobalNotifications();
     };
   }, [isAuthReady, user, isAdmin]);
 
@@ -741,6 +948,7 @@ function MainApp() {
       // Update user document in Firestore
       const userRef = doc(db, 'users', user.uid);
       await setDoc(userRef, {
+        uid: user.uid,
         name: displayName,
         photoURL: newPhotoURL,
         username: newUsername,
@@ -782,6 +990,7 @@ function MainApp() {
       // Update user document in Firestore
       const userRef = doc(db, 'users', user.uid);
       await setDoc(userRef, {
+        uid: user.uid,
         photoURL: newPhotoURL,
         updatedAt: serverTimestamp()
       }, { merge: true });
@@ -826,6 +1035,62 @@ function MainApp() {
     } finally {
       setIsUploadingAd(false);
       setAdUploadProgress(0);
+    }
+  };
+
+  const handleUpdateUserBalance = async (userId: string, amount: number) => {
+    if (!isAdmin) return;
+    try {
+      await updateDoc(doc(db, 'users', userId), { 
+        balance: amount,
+        uid: userId
+      });
+      await updateDoc(doc(db, 'users_public', userId), { 
+        balance: amount,
+        uid: userId
+      });
+      setIsEditingUserBalance(null);
+    } catch (error) {
+      console.error('Error updating user balance:', error);
+    }
+  };
+
+  const handleToggleUserVerification = async (userId: string, currentStatus: boolean) => {
+    if (!isAdmin) return;
+    try {
+      await updateDoc(doc(db, 'users', userId), { 
+        isVerified: !currentStatus,
+        uid: userId
+      });
+      await updateDoc(doc(db, 'users_public', userId), { 
+        isVerified: !currentStatus,
+        uid: userId
+      });
+    } catch (error) {
+      console.error('Error toggling verification:', error);
+    }
+  };
+
+  const handleSendGlobalNotification = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isAdmin || !adminNotificationTitle.trim() || !adminNotificationBody.trim()) return;
+
+    setIsSendingNotification(true);
+    try {
+      await addDoc(collection(db, 'global_notifications'), {
+        title: adminNotificationTitle,
+        body: adminNotificationBody,
+        createdAt: serverTimestamp(),
+        senderId: user?.uid
+      });
+      
+      setAdminNotificationTitle('');
+      setAdminNotificationBody('');
+      alert('Global notification sent successfully!');
+    } catch (error) {
+      console.error('Error sending global notification:', error);
+    } finally {
+      setIsSendingNotification(false);
     }
   };
 
@@ -945,6 +1210,7 @@ function MainApp() {
       // Increment user balance by 0.10 BDT
       const userRef = doc(db, 'users', user.uid);
       await setDoc(userRef, {
+        uid: user.uid,
         balance: increment(0.10)
       }, { merge: true });
       
@@ -1235,6 +1501,48 @@ function MainApp() {
       <main className="max-w-5xl mx-auto px-4 py-8 pb-24">
         {activeTab === 'home' && (
           <>
+            {/* Global Announcements */}
+            {globalNotifications.length > 0 && (
+              <section className="mb-8 max-w-2xl mx-auto space-y-4">
+                {globalNotifications.slice(0, 2).map(notification => (
+                  <motion.div 
+                    key={notification.id}
+                    initial={{ opacity: 0, y: -20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="bg-indigo-600/20 border border-indigo-500/30 p-4 rounded-2xl relative overflow-hidden group"
+                  >
+                    <div className="absolute top-0 right-0 p-2 opacity-20 group-hover:opacity-40 transition-opacity">
+                      <Megaphone size={48} className="rotate-12" />
+                    </div>
+                    <div className="flex items-start gap-3 relative z-10">
+                      <div className="p-2 bg-indigo-500 text-white rounded-xl shadow-lg shadow-indigo-500/20">
+                        <Megaphone size={20} />
+                      </div>
+                      <div className="flex-1">
+                        <h4 className="font-bold text-white text-sm mb-1">{notification.title}</h4>
+                        <p className="text-xs text-indigo-100 leading-relaxed">{notification.body}</p>
+                        <div className="text-[10px] text-indigo-400 mt-2 font-medium">
+                          {notification.createdAt?.toDate().toLocaleString()}
+                        </div>
+                      </div>
+                      {isAdmin && (
+                        <button 
+                          onClick={async () => {
+                            if (confirm('Delete this announcement?')) {
+                              await deleteDoc(doc(db, 'global_notifications', notification.id));
+                            }
+                          }}
+                          className="p-1.5 text-indigo-400 hover:text-red-500 transition-colors"
+                        >
+                          <X size={16} />
+                        </button>
+                      )}
+                    </div>
+                  </motion.div>
+                ))}
+              </section>
+            )}
+
             {/* Ad Banner Slideshow */}
             <section className="mb-8 max-w-2xl mx-auto">
               <div className="relative h-48 md:h-64 rounded-2xl overflow-hidden bg-slate-900 shadow-2xl shadow-indigo-500/10 border border-slate-800/50">
@@ -1763,7 +2071,9 @@ function MainApp() {
                         disabled={isSavingProfile}
                       />
                     </div>
-                    <h2 className="text-2xl font-bold text-white">{user.displayName}</h2>
+                    <h2 className="text-2xl font-bold text-white flex items-center justify-center gap-2">
+                      {user.displayName}
+                    </h2>
                     {userProfile?.username && (
                       <p className="text-indigo-400 font-medium mb-1">@{userProfile.username}</p>
                     )}
@@ -1901,7 +2211,9 @@ function MainApp() {
                         referrerPolicy="no-referrer"
                       />
                     </div>
-                    <h2 className="text-2xl font-bold text-white">{viewingUserProfile.name}</h2>
+                    <h2 className="text-2xl font-bold text-white flex items-center justify-center gap-2">
+                      {viewingUserProfile.name}
+                    </h2>
                     {viewingUserProfile.username && (
                       <p className="text-indigo-400 font-medium mb-4">@{viewingUserProfile.username}</p>
                     )}
@@ -1982,8 +2294,13 @@ function MainApp() {
             )}
 
             <h3 className="text-xl font-semibold text-white mb-4">
-              {viewingUserId === user.uid ? (profileViewTab === 'posts' ? 'Your Posts' : 'Saved Posts') : `${viewingUserProfile?.name}'s Posts`}
+              {viewingUserId === user.uid ? (
+                profileViewTab === 'posts' ? 'Your Posts' : 'Saved Posts'
+              ) : (
+                `${viewingUserProfile?.name}'s Posts`
+              )}
             </h3>
+            
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
               {posts.filter(p => {
                 if (viewingUserId === user.uid && profileViewTab === 'saved') {
@@ -2193,174 +2510,454 @@ function MainApp() {
           </section>
         )}
         {activeTab === 'admin' && isAdmin && (
-          <section className="max-w-4xl mx-auto">
-            <div className="bg-[#0f172a]/80 rounded-2xl shadow-sm border border-slate-800 p-6 mb-8">
-              <div className="flex items-center gap-3 mb-6">
-                <Shield className="text-indigo-400" size={28} />
-                <h2 className="text-2xl font-bold text-white">Admin Dashboard</h2>
+          <section className="max-w-4xl mx-auto pb-24 px-2">
+            <div className="bg-[#0f172a]/80 rounded-2xl shadow-sm border border-slate-800 p-4 md:p-6 mb-8">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+                <div className="flex items-center gap-3">
+                  <Shield className="text-indigo-400" size={28} />
+                  <h2 className="text-xl md:text-2xl font-bold text-white">Admin Dashboard</h2>
+                </div>
+                <div className="flex gap-2 bg-slate-900/60 p-1 rounded-xl border border-slate-800 overflow-x-auto no-scrollbar max-w-full">
+                  <button 
+                    onClick={() => setAdminActiveSubTab('withdrawals')}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all shrink-0 ${adminActiveSubTab === 'withdrawals' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    Withdrawals
+                  </button>
+                  <button 
+                    onClick={() => setAdminActiveSubTab('users')}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all shrink-0 ${adminActiveSubTab === 'users' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    Users
+                  </button>
+                  <button 
+                    onClick={() => setAdminActiveSubTab('posts')}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all shrink-0 ${adminActiveSubTab === 'posts' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    Posts
+                  </button>
+                  <button 
+                    onClick={() => setAdminActiveSubTab('ads')}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all shrink-0 ${adminActiveSubTab === 'ads' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    Ads
+                  </button>
+                </div>
+              </div>
+
+              {/* Stats Overview */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                <div className="bg-slate-900/40 p-4 rounded-2xl border border-slate-800/50">
+                  <div className="flex items-center gap-2 text-slate-400 text-xs mb-1">
+                    <Users size={14} />
+                    Total Users
+                  </div>
+                  <div className="text-xl font-bold text-white">{adminStats.totalUsers}</div>
+                </div>
+                <div className="bg-slate-900/40 p-4 rounded-2xl border border-slate-800/50">
+                  <div className="flex items-center gap-2 text-slate-400 text-xs mb-1">
+                    <Wallet size={14} />
+                    Total Balance
+                  </div>
+                  <div className="text-xl font-bold text-white">৳ {adminStats.totalBalance.toFixed(2)}</div>
+                </div>
+                <div className="bg-slate-900/40 p-4 rounded-2xl border border-slate-800/50">
+                  <div className="flex items-center gap-2 text-slate-400 text-xs mb-1">
+                    <Download size={14} />
+                    Pending W/D
+                  </div>
+                  <div className="text-xl font-bold text-orange-400">{adminStats.pendingWithdrawals}</div>
+                </div>
+                <div className="bg-slate-900/40 p-4 rounded-2xl border border-slate-800/50">
+                  <div className="flex items-center gap-2 text-slate-400 text-xs mb-1">
+                    <FileText size={14} />
+                    Total Posts
+                  </div>
+                  <div className="text-xl font-bold text-indigo-400">{adminStats.totalPosts}</div>
+                </div>
               </div>
               
-              <h3 className="text-xl font-semibold text-white mb-4">Pending Withdrawals</h3>
-              {allWithdrawals.filter(w => w.status === 'pending').length === 0 ? (
-                <p className="text-slate-500">No pending withdrawals.</p>
-              ) : (
-                <div className="space-y-4">
-                  {allWithdrawals.filter(w => w.status === 'pending').map(w => (
-                    <div key={w.id} className="flex items-center justify-between p-4 bg-slate-900/40 rounded-xl border border-slate-800/50">
-                      <div>
-                        <div className="font-medium text-white capitalize">{w.method} - {w.accountNumber}</div>
-                        <div className="text-sm text-slate-400">User: {w.userEmail || 'Unknown'}</div>
-                        <div className="text-xs text-slate-500">{w.createdAt?.toDate().toLocaleString()}</div>
-                      </div>
-                      <div className="text-right flex flex-col items-end gap-2">
-                        <div className="font-bold text-white">৳ {w.amount.toFixed(2)}</div>
-                        <div className="flex gap-2">
-                          <button 
-                            onClick={async () => {
-                              try {
-                                await updateDoc(doc(db, 'withdrawals', w.id), { status: 'approved' });
-                              } catch (e) {
-                                console.error(e);
-                              }
-                            }}
-                            className="px-3 py-1 bg-green-500/20 text-green-500 rounded-lg text-sm font-medium hover:bg-green-500/30 transition-colors"
-                          >
-                            Approve
-                          </button>
-                          <button 
-                            onClick={async () => {
-                              try {
-                                await updateDoc(doc(db, 'withdrawals', w.id), { status: 'rejected' });
-                                // Refund balance
-                                if (w.uid) {
-                                  await updateDoc(doc(db, 'users', w.uid), { balance: increment(w.amount) });
-                                  await setDoc(doc(db, 'users_public', w.uid), { 
-                                    uid: w.uid,
-                                    name: w.userEmail?.split('@')[0] || 'Anonymous',
-                                    balance: increment(w.amount) 
-                                  }, { merge: true });
-                                }
-                              } catch (e) {
-                                console.error(e);
-                              }
-                            }}
-                            className="px-3 py-1 bg-red-500/20 text-red-500 rounded-lg text-sm font-medium hover:bg-red-500/30 transition-colors"
-                          >
-                            Reject
-                          </button>
+              {/* Withdrawals Tab */}
+              {adminActiveSubTab === 'withdrawals' && (
+                <div className="space-y-6">
+                  <h3 className="text-xl font-semibold text-white flex items-center gap-2">
+                    <Download size={20} className="text-indigo-400" />
+                    Withdrawal Requests
+                  </h3>
+                  {allWithdrawals.length === 0 ? (
+                    <p className="text-slate-500 bg-slate-900/20 p-8 rounded-2xl text-center border border-dashed border-slate-800">No withdrawal requests found.</p>
+                  ) : (
+                    <div className="space-y-4">
+                      {allWithdrawals.map(w => (
+                        <div key={w.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-slate-900/40 rounded-xl border border-slate-800/50 hover:border-slate-700 transition-colors gap-4">
+                          <div className="flex-1">
+                            <div className="flex items-center flex-wrap gap-2 mb-1">
+                              <div className="font-medium text-white capitalize">{w.method} - {w.accountNumber}</div>
+                              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                                w.status === 'pending' ? 'bg-orange-500/20 text-orange-500' :
+                                w.status === 'approved' ? 'bg-green-500/20 text-green-500' :
+                                'bg-red-500/20 text-red-500'
+                              }`}>
+                                {w.status}
+                              </span>
+                            </div>
+                            <div className="text-sm text-slate-400 truncate max-w-full">User: {w.userEmail || 'Unknown'}</div>
+                            <div className="text-[10px] text-slate-500 mt-1">{w.createdAt?.toDate().toLocaleString()}</div>
+                          </div>
+                          <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-3 shrink-0">
+                            <div className="font-bold text-white text-lg">৳ {w.amount.toFixed(2)}</div>
+                            {w.status === 'pending' && (
+                              <div className="flex gap-2">
+                                <button 
+                                  onClick={async () => {
+                                    try {
+                                      await updateDoc(doc(db, 'withdrawals', w.id), { status: 'approved' });
+                                    } catch (e) {
+                                      console.error(e);
+                                    }
+                                  }}
+                                  className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-bold hover:bg-green-600 transition-colors shadow-lg shadow-green-500/20"
+                                >
+                                  Approve
+                                </button>
+                                <button 
+                                  onClick={async () => {
+                                    try {
+                                      await updateDoc(doc(db, 'withdrawals', w.id), { status: 'rejected' });
+                                      if (w.uid) {
+                                        await updateDoc(doc(db, 'users', w.uid), { balance: increment(w.amount), uid: w.uid });
+                                        await updateDoc(doc(db, 'users_public', w.uid), { balance: increment(w.amount), uid: w.uid });
+                                      }
+                                    } catch (e) {
+                                      console.error(e);
+                                    }
+                                  }}
+                                  className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-xs font-bold hover:bg-red-600 transition-colors shadow-lg shadow-red-500/20"
+                                >
+                                  Reject
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
                 </div>
               )}
 
-              <div className="mt-12">
-                <h3 className="text-xl font-semibold text-white mb-6 flex items-center gap-2">
-                  <ImageIcon size={20} className="text-indigo-400" />
-                  Manage Ad Banners
-                </h3>
-                
-                <form onSubmit={handleAddAdBanner} className="bg-slate-900/40 p-6 rounded-2xl border border-slate-800/50 mb-8">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-slate-400">Banner Image</label>
-                      <div className="relative h-32 rounded-xl border-2 border-dashed border-slate-700 bg-slate-800/50 flex flex-col items-center justify-center overflow-hidden group">
-                        {newAdFile ? (
-                          <>
-                            <img src={URL.createObjectURL(newAdFile)} className="w-full h-full object-cover" />
-                            <button 
-                              type="button"
-                              onClick={() => setNewAdFile(null)}
-                              className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-                            >
-                              <X size={14} />
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <Camera size={24} className="text-slate-500 mb-2" />
-                            <span className="text-xs text-slate-500">Click to upload banner</span>
-                          </>
-                        )}
-                        <input 
-                          type="file" 
-                          accept="image/*" 
-                          onChange={(e) => setNewAdFile(e.target.files?.[0] || null)}
-                          className="absolute inset-0 opacity-0 cursor-pointer"
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium text-slate-400">Target Link URL</label>
+              {/* Users Tab */}
+              {adminActiveSubTab === 'users' && (
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between gap-4">
+                    <h3 className="text-xl font-semibold text-white flex items-center gap-2 shrink-0">
+                      <Users size={20} className="text-indigo-400" />
+                      User Management
+                    </h3>
+                    <div className="relative flex-1 max-w-xs">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
                       <input 
-                        type="url"
-                        placeholder="https://example.com"
-                        value={newAdLink}
-                        onChange={(e) => setNewAdLink(e.target.value)}
-                        className="w-full px-4 py-3 bg-slate-800/60 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"
-                        required
+                        type="text"
+                        placeholder="Search users..."
+                        value={adminSearchQuery}
+                        onChange={(e) => setAdminSearchQuery(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2 bg-slate-900/60 border border-slate-800 rounded-xl text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors"
                       />
-                      <p className="text-[10px] text-slate-500">Users will be redirected to this link when they click the banner.</p>
                     </div>
                   </div>
-                  
-                  {isUploadingAd && (
-                    <div className="mb-6">
-                      <div className="flex justify-between text-xs text-slate-400 mb-1.5">
-                        <span>Uploading banner...</span>
-                        <span>{adUploadProgress}%</span>
-                      </div>
-                      <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                        <div className="h-full bg-indigo-500 transition-all duration-300" style={{ width: `${adUploadProgress}%` }} />
-                      </div>
-                    </div>
-                  )}
 
-                  <button 
-                    type="submit"
-                    disabled={isUploadingAd || !newAdFile || !newAdLink.trim()}
-                    className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    {isUploadingAd ? <Loader2 size={20} className="animate-spin" /> : <Plus size={20} />}
-                    Add Banner Ad
-                  </button>
-                </form>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {allAdBanners.map(ad => (
-                    <div key={ad.id} className="bg-slate-900/40 rounded-xl border border-slate-800/50 overflow-hidden flex flex-col">
-                      <div className="aspect-video relative">
-                        <img src={ad.imageUrl} className="w-full h-full object-cover" />
-                        <div className="absolute top-2 right-2 flex gap-2">
-                          <button 
-                            onClick={() => toggleAdStatus(ad.id, ad.active)}
-                            className={`p-2 rounded-lg backdrop-blur-md transition-colors ${ad.active ? 'bg-green-500/80 text-white' : 'bg-slate-800/80 text-slate-400'}`}
-                            title={ad.active ? "Deactivate" : "Activate"}
-                          >
-                            <Check size={16} />
-                          </button>
-                          <button 
-                            onClick={() => handleDeleteAdBanner(ad.id)}
-                            className="p-2 bg-red-500/80 text-white rounded-lg backdrop-blur-md hover:bg-red-600 transition-colors"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </div>
-                      <div className="p-3">
-                        <div className="text-xs text-slate-400 truncate mb-1">{ad.linkUrl}</div>
-                        <div className="flex justify-between items-center">
-                          <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${ad.active ? 'bg-green-500/20 text-green-500' : 'bg-slate-800 text-slate-500'}`}>
-                            {ad.active ? 'Active' : 'Inactive'}
-                          </span>
-                          <span className="text-[10px] text-slate-500">{ad.createdAt?.toDate().toLocaleDateString()}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                  <div className="bg-slate-900/20 rounded-2xl border border-slate-800 overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[600px]">
+                      <thead>
+                        <tr className="bg-slate-900/60 border-b border-slate-800">
+                          <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-wider">User</th>
+                          <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Balance</th>
+                          <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Status</th>
+                          <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-wider text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/50">
+                        {adminUsers.filter(u => 
+                          u.name.toLowerCase().includes(adminSearchQuery.toLowerCase()) || 
+                          u.email?.toLowerCase().includes(adminSearchQuery.toLowerCase())
+                        ).map(u => (
+                          <tr key={u.uid} className="hover:bg-slate-800/20 transition-colors">
+                            <td className="p-4">
+                              <div className="flex items-center gap-3">
+                                {u.photoURL ? (
+                                  <img src={u.photoURL} alt={u.name} className="w-8 h-8 rounded-full border border-slate-700 object-cover" referrerPolicy="no-referrer" />
+                                ) : (
+                                  <div className="w-8 h-8 rounded-full bg-indigo-900/50 text-indigo-400 flex items-center justify-center font-bold text-xs">
+                                    {u.name.charAt(0).toUpperCase()}
+                                  </div>
+                                )}
+                                <div>
+                                  <div className="text-sm font-medium text-white flex items-center gap-1">
+                                    {u.name}
+                                    {u.isVerified && <Award size={12} className="text-indigo-400 fill-indigo-400/20" />}
+                                  </div>
+                                  <div className="text-[10px] text-slate-500 truncate max-w-[150px]">{u.email}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="p-4">
+                              {isEditingUserBalance === u.uid ? (
+                                <div className="flex items-center gap-2">
+                                  <input 
+                                    type="number"
+                                    value={newUserBalance}
+                                    onChange={(e) => setNewUserBalance(Number(e.target.value))}
+                                    className="w-20 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs text-white focus:outline-none"
+                                  />
+                                  <button 
+                                    onClick={() => handleUpdateUserBalance(u.uid, newUserBalance)}
+                                    className="p-1 bg-green-500 text-white rounded hover:bg-green-600"
+                                  >
+                                    <Check size={14} />
+                                  </button>
+                                  <button 
+                                    onClick={() => setIsEditingUserBalance(null)}
+                                    className="p-1 bg-slate-700 text-white rounded hover:bg-slate-600"
+                                  >
+                                    <X size={14} />
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2 group">
+                                  <span className="text-sm font-bold text-white">৳ {u.balance?.toFixed(2) || '0.00'}</span>
+                                  <button 
+                                    onClick={() => {
+                                      setIsEditingUserBalance(u.uid);
+                                      setNewUserBalance(u.balance || 0);
+                                    }}
+                                    className="p-1 text-slate-500 hover:text-indigo-400 md:opacity-0 group-hover:opacity-100 transition-all"
+                                  >
+                                    <Edit2 size={12} />
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                            <td className="p-4">
+                              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                                u.role === 'admin' ? 'bg-indigo-500/20 text-indigo-500' : 'bg-slate-800 text-slate-500'
+                              }`}>
+                                {u.role || 'client'}
+                              </span>
+                            </td>
+                            <td className="p-4 text-right">
+                              <button 
+                                onClick={() => handleToggleUserVerification(u.uid, u.isVerified || false)}
+                                className={`p-2 rounded-lg transition-all ${
+                                  u.isVerified ? 'bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30' : 'bg-slate-800 text-slate-500 hover:text-white hover:bg-slate-700'
+                                }`}
+                                title={u.isVerified ? "Remove Verification" : "Verify User"}
+                              >
+                                <Award size={16} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* Posts Tab */}
+              {adminActiveSubTab === 'posts' && (
+                <div className="space-y-6">
+                  <h3 className="text-xl font-semibold text-white flex items-center gap-2">
+                    <FileText size={20} className="text-indigo-400" />
+                    Post Moderation
+                  </h3>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    {allPosts.map(post => (
+                      <div key={post.id} className="group relative aspect-square rounded-2xl overflow-hidden bg-slate-900 border border-slate-800">
+                        <img src={post.imageUrl} alt={post.caption} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity p-3 flex flex-col justify-end">
+                          <div className="text-xs text-white font-medium mb-1 truncate">@{post.username || 'anonymous'}</div>
+                          <div className="text-[10px] text-slate-300 line-clamp-2 mb-3">{post.caption}</div>
+                          <button 
+                            onClick={async () => {
+                              if (confirm('Are you sure you want to delete this post?')) {
+                                try {
+                                  await deleteDoc(doc(db, 'posts', post.id));
+                                } catch (e) {
+                                  console.error(e);
+                                }
+                              }
+                            }}
+                            className="w-full py-1.5 bg-red-500 text-white rounded-lg text-[10px] font-bold hover:bg-red-600 transition-colors flex items-center justify-center gap-1"
+                          >
+                            <Trash2 size={12} />
+                            Delete Post
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Ads Tab */}
+              {adminActiveSubTab === 'ads' && (
+                <div className="space-y-8">
+                  <div className="bg-slate-900/40 p-6 rounded-2xl border border-slate-800/50">
+                    <h3 className="text-xl font-semibold text-white mb-6 flex items-center gap-2">
+                      <ImageIcon size={20} className="text-indigo-400" />
+                      Add New Banner Ad
+                    </h3>
+                    <form onSubmit={handleAddAdBanner} className="space-y-6">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-slate-400">Banner Image</label>
+                          <div className="relative h-40 rounded-xl border-2 border-dashed border-slate-700 bg-slate-800/50 flex flex-col items-center justify-center overflow-hidden group hover:border-indigo-500/50 transition-colors">
+                            {newAdFile ? (
+                              <>
+                                <img src={URL.createObjectURL(newAdFile)} className="w-full h-full object-cover" />
+                                <button 
+                                  type="button"
+                                  onClick={() => setNewAdFile(null)}
+                                  className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-full shadow-lg"
+                                >
+                                  <X size={14} />
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <Camera size={32} className="text-slate-500 mb-2" />
+                                <span className="text-xs text-slate-500">Click to upload banner (16:9 recommended)</span>
+                              </>
+                            )}
+                            <input 
+                              type="file" 
+                              accept="image/*" 
+                              onChange={(e) => setNewAdFile(e.target.files?.[0] || null)}
+                              className="absolute inset-0 opacity-0 cursor-pointer"
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium text-slate-400">Target Link URL</label>
+                            <input 
+                              type="url"
+                              placeholder="https://example.com"
+                              value={newAdLink}
+                              onChange={(e) => setNewAdLink(e.target.value)}
+                              className="w-full px-4 py-3 bg-slate-800/60 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                              required
+                            />
+                          </div>
+                          <div className="p-4 bg-indigo-500/10 rounded-xl border border-indigo-500/20">
+                            <p className="text-xs text-indigo-300 leading-relaxed">
+                              Banner ads appear at the top of the home feed. Ensure the image is high quality and the link is valid.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {isUploadingAd && (
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-xs text-slate-400">
+                            <span>Uploading banner...</span>
+                            <span>{adUploadProgress}%</span>
+                          </div>
+                          <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                            <div className="h-full bg-indigo-500 transition-all duration-300" style={{ width: `${adUploadProgress}%` }} />
+                          </div>
+                        </div>
+                      )}
+
+                      <button 
+                        type="submit"
+                        disabled={isUploadingAd || !newAdFile || !newAdLink.trim()}
+                        className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20"
+                      >
+                        {isUploadingAd ? <Loader2 size={24} className="animate-spin" /> : <Plus size={24} />}
+                        Publish Banner Ad
+                      </button>
+                    </form>
+                  </div>
+
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-semibold text-white">Active Banners</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {allAdBanners.map(ad => (
+                        <div key={ad.id} className="bg-slate-900/40 rounded-xl border border-slate-800/50 overflow-hidden group">
+                          <div className="aspect-video relative">
+                            <img src={ad.imageUrl} className="w-full h-full object-cover" />
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                              <button 
+                                onClick={() => toggleAdStatus(ad.id, ad.active)}
+                                className={`p-3 rounded-xl backdrop-blur-md transition-all hover:scale-110 ${ad.active ? 'bg-green-500 text-white' : 'bg-slate-800 text-slate-400'}`}
+                                title={ad.active ? "Deactivate" : "Activate"}
+                              >
+                                <Check size={20} />
+                              </button>
+                              <button 
+                                onClick={() => handleDeleteAdBanner(ad.id)}
+                                className="p-3 bg-red-500 text-white rounded-xl backdrop-blur-md hover:bg-red-600 hover:scale-110 transition-all"
+                              >
+                                <Trash2 size={20} />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="p-4 flex items-center justify-between">
+                            <div className="truncate flex-1 mr-4">
+                              <div className="text-xs text-white font-medium truncate">{ad.linkUrl}</div>
+                              <div className="text-[10px] text-slate-500">{ad.createdAt?.toDate().toLocaleDateString()}</div>
+                            </div>
+                            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg ${ad.active ? 'bg-green-500/20 text-green-500' : 'bg-slate-800 text-slate-500'}`}>
+                              {ad.active ? 'Active' : 'Inactive'}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Global Notification Section */}
+                  <div className="bg-slate-900/40 p-6 rounded-2xl border border-slate-800/50 mt-12">
+                    <h3 className="text-xl font-semibold text-white mb-6 flex items-center gap-2">
+                      <Megaphone size={20} className="text-indigo-400" />
+                      Send Global Announcement
+                    </h3>
+                    <form onSubmit={handleSendGlobalNotification} className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-400">Announcement Title</label>
+                        <input 
+                          type="text"
+                          placeholder="Important Update"
+                          value={adminNotificationTitle}
+                          onChange={(e) => setAdminNotificationTitle(e.target.value)}
+                          className="w-full px-4 py-3 bg-slate-800/60 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                          required
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium text-slate-400">Message Content</label>
+                        <textarea 
+                          placeholder="Enter your message here..."
+                          value={adminNotificationBody}
+                          onChange={(e) => setAdminNotificationBody(e.target.value)}
+                          rows={3}
+                          className="w-full px-4 py-3 bg-slate-800/60 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-indigo-500 transition-colors resize-none"
+                          required
+                        />
+                      </div>
+                      <button 
+                        type="submit"
+                        disabled={isSendingNotification || !adminNotificationTitle.trim() || !adminNotificationBody.trim()}
+                        className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {isSendingNotification ? <Loader2 size={20} className="animate-spin" /> : <Megaphone size={20} />}
+                        Send to All Users
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              )}
             </div>
           </section>
         )}
@@ -2389,23 +2986,7 @@ function MainApp() {
             <Wallet size={24} />
           </button>
           
-          {/* Center Add Button */}
-          <div className="relative -top-6">
-            <button 
-              onClick={() => {
-                if (!user) {
-                  handleSignIn();
-                  return;
-                }
-                setActiveTab('home');
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-                // Focus file input if possible, or just scroll to top
-              }}
-              className="w-14 h-14 bg-[#38bdf8] rounded-2xl flex items-center justify-center text-black shadow-[0_0_20px_rgba(56,189,248,0.4)] hover:scale-105 transition-transform"
-            >
-              <Plus size={28} strokeWidth={2.5} />
-            </button>
-          </div>
+          {/* Center Add Button removed as requested */}
           
           <button 
             onClick={() => {
@@ -2752,11 +3333,13 @@ function MainApp() {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<MainApp />} />
-        <Route path="/:username" element={<MainApp />} />
-      </Routes>
-    </BrowserRouter>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<MainApp />} />
+          <Route path="/:username" element={<MainApp />} />
+        </Routes>
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 }

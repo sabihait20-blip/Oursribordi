@@ -88,3 +88,12 @@
   animation: heartBeatNeon 15s infinite;
   animation-delay: 1s;
 }
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
