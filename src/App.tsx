@@ -973,7 +973,11 @@ function MainApp() {
                     }
                   }
                 }
-              } catch (tokenError) {
+              } catch (tokenError: any) {
+                if (tokenError instanceof Error && tokenError.message.includes('authInfo')) {
+                  // This is a Firestore error thrown by handleFirestoreError, rethrow it
+                  throw tokenError;
+                }
                 console.error('Error calling getToken:', tokenError);
                 if (tokenError instanceof Error && tokenError.message.includes('permission')) {
                   console.warn('FCM Permission Error: Please ensure "Firebase Cloud Messaging API (V1)" is enabled in Google Cloud Console and your VAPID key is correct.');
