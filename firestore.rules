@@ -165,13 +165,30 @@ service cloud.firestore {
     }
 
     function isValidMessage(data) {
-      return hasOnlyAllowedFields(['text', 'senderId', 'createdAt', 'status']) &&
+      return hasOnlyAllowedFields(['text', 'senderId', 'createdAt', 'status', 'type', 'fileUrl', 'fileName', 'fileSize', 'duration']) &&
              hasRequiredFields(['text', 'senderId', 'createdAt']) &&
              data.text is string &&
              validStringLength('text', 1, 1000) &&
              data.senderId is string &&
              data.createdAt is timestamp &&
-             (!('status' in data) || data.status in ['sent', 'read']);
+             (!('status' in data) || data.status in ['sent', 'read']) &&
+             (!('type' in data) || data.type in ['text', 'voice', 'file', 'image']) &&
+             (!('fileUrl' in data) || data.fileUrl is string) &&
+             (!('fileName' in data) || data.fileName is string) &&
+             (!('fileSize' in data) || data.fileSize is number) &&
+             (!('duration' in data) || data.duration is number);
+    }
+
+    function isValidCall(data) {
+      return hasOnlyAllowedFields(['callerId', 'receiverId', 'status', 'type', 'createdAt', 'offer', 'answer']) &&
+             hasRequiredFields(['callerId', 'receiverId', 'status', 'type', 'createdAt']) &&
+             data.callerId is string &&
+             data.receiverId is string &&
+             data.status in ['ringing', 'accepted', 'declined', 'ended'] &&
+             data.type in ['voice', 'video'] &&
+             data.createdAt is timestamp &&
+             (!('offer' in data) || data.offer is map) &&
+             (!('answer' in data) || data.answer is map);
     }
 
     function isValidFollower(data) {
@@ -286,6 +303,18 @@ service cloud.firestore {
                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']) &&
                       request.resource.data.status == 'read';
       }
+    }
+
+    match /calls/{callId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.callerId || request.auth.uid == resource.data.receiverId);
+      allow create: if isAuthenticated() && 
+                    isValidCall(request.resource.data) && 
+                    request.resource.data.callerId == request.auth.uid &&
+                    request.resource.data.createdAt == request.time;
+      allow update: if isAuthenticated() && 
+                    isValidCall(request.resource.data) && 
+                    (request.auth.uid == resource.data.callerId || request.auth.uid == resource.data.receiverId);
+      allow delete: if isAuthenticated() && (request.auth.uid == resource.data.callerId || request.auth.uid == resource.data.receiverId);
     }
 
     match /users/{userId} {

@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import React, { useState, useEffect, useRef, ErrorInfo, ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, useParams, useNavigate, Link } from 'react-router-dom';
-import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search, Edit2, UserPlus, UserMinus, Bookmark, Shield, Trophy, Award, Bell, Camera, Eye, AtSign, ShoppingBag, Store, ShoppingCart, Users, BarChart3, Megaphone, FileText } from 'lucide-react';
+import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search, Edit2, UserPlus, UserMinus, Bookmark, Shield, Trophy, Award, Bell, Camera, Eye, AtSign, ShoppingBag, Store, ShoppingCart, Users, BarChart3, Megaphone, FileText, Mic, Phone, Paperclip, Video, PhoneOff, PhoneIncoming, PhoneOutgoing } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, addDoc, onSnapshot, query, serverTimestamp, Timestamp, deleteDoc, doc, where, or, updateDoc, arrayUnion, arrayRemove, orderBy, getDoc, getDocs, setDoc, increment } from 'firebase/firestore';
 import { onAuthStateChanged, User, updateProfile } from 'firebase/auth';
@@ -85,7 +85,23 @@ interface ChatMessage {
   text: string;
   senderId: string;
   createdAt: any;
-  status?: 'sent' | 'read';
+  status: 'sent' | 'read';
+  type?: 'text' | 'voice' | 'file' | 'image';
+  fileUrl?: string;
+  fileName?: string;
+  fileSize?: number;
+  duration?: number;
+}
+
+interface CallSession {
+  id: string;
+  callerId: string;
+  receiverId: string;
+  status: 'ringing' | 'accepted' | 'declined' | 'ended';
+  type: 'voice' | 'video';
+  createdAt: any;
+  offer?: any;
+  answer?: any;
 }
 
 interface ChatConversation {
@@ -221,8 +237,306 @@ function MainApp() {
   const [selectedImage, setSelectedImage] = useState<Post | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowInstallBanner(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      console.log('User accepted the install prompt');
+    }
+    setDeferredPrompt(null);
+    setShowInstallBanner(false);
+  };
   const [postToDelete, setPostToDelete] = useState<Post | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [audioChunks, setAudioChunks] = useState<Blob[]>([]);
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
+  const [incomingCall, setIncomingCall] = useState<CallSession | null>(null);
+  const [activeCall, setActiveCall] = useState<CallSession | null>(null);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const peerConnection = useRef<RTCPeerConnection | null>(null);
+  const recordingTimer = useRef<any>(null);
+
+  // Call Signaling Listeners
+  useEffect(() => {
+    if (!user) return;
+
+    const q = query(
+      collection(db, 'calls'),
+      where('receiverId', '==', user.uid),
+      where('status', '==', 'ringing')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const calls = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CallSession));
+      if (calls.length > 0 && !activeCall) {
+        setIncomingCall(calls[0]);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [user, activeCall]);
+
+  useEffect(() => {
+    if (!activeCall || !user) return;
+
+    const unsubscribe = onSnapshot(doc(db, 'calls', activeCall.id), (snapshot) => {
+      const data = snapshot.data() as CallSession;
+      if (data?.status === 'ended' || data?.status === 'declined') {
+        handleEndCall();
+      }
+      if (data?.answer && !peerConnection.current?.remoteDescription) {
+        peerConnection.current?.setRemoteDescription(new RTCSessionDescription(data.answer));
+      }
+    });
+
+    return () => unsubscribe();
+  }, [activeCall, user]);
+
+  // Voice Recording Logic
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      const chunks: Blob[] = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        const audioBlob = new Blob(chunks, { type: 'audio/webm' });
+        await sendVoiceMessage(audioBlob);
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      setMediaRecorder(recorder);
+      setAudioChunks(chunks);
+      recorder.start();
+      setIsRecording(true);
+      setRecordingDuration(0);
+      recordingTimer.current = setInterval(() => {
+        setRecordingDuration(prev => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error("Error accessing microphone:", err);
+      alert("Could not access microphone.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+      setIsRecording(false);
+      clearInterval(recordingTimer.current);
+    }
+  };
+
+  const sendVoiceMessage = async (blob: Blob) => {
+    if (!selectedChatUser || !user) return;
+
+    setIsUploadingFile(true);
+    try {
+      // For demo purposes, we'll use base64 if it's small, or a mock upload
+      // In a real app, upload to Firebase Storage
+      const reader = new FileReader();
+      reader.readAsDataURL(blob);
+      reader.onloadend = async () => {
+        const base64data = reader.result as string;
+        
+        const chatId = [user.uid, selectedChatUser.uid].sort().join('_');
+        const messageData = {
+          text: '🎤 Voice Message',
+          senderId: user.uid,
+          createdAt: serverTimestamp(),
+          status: 'sent',
+          type: 'voice',
+          fileUrl: base64data, // Using base64 for demo
+          duration: recordingDuration
+        };
+
+        await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
+        await setDoc(doc(db, 'chats', chatId), {
+          lastMessage: '🎤 Voice Message',
+          lastSenderId: user.uid,
+          lastTimestamp: serverTimestamp(),
+          participants: [user.uid, selectedChatUser.uid],
+          isRead: false
+        }, { merge: true });
+      };
+    } catch (err) {
+      console.error("Error sending voice message:", err);
+    } finally {
+      setIsUploadingFile(false);
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedChatUser || !user) return;
+
+    setIsUploadingFile(true);
+    try {
+      // Mock file upload - in real app use Firebase Storage
+      // For demo, we'll use base64 for small files
+      if (file.size > 1024 * 1024) {
+        alert("File too large for demo (max 1MB)");
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onloadend = async () => {
+        const base64data = reader.result as string;
+        const chatId = [user.uid, selectedChatUser.uid].sort().join('_');
+        
+        const messageData = {
+          text: `📁 ${file.name}`,
+          senderId: user.uid,
+          createdAt: serverTimestamp(),
+          status: 'sent',
+          type: 'file',
+          fileUrl: base64data,
+          fileName: file.name,
+          fileSize: file.size
+        };
+
+        await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
+        await setDoc(doc(db, 'chats', chatId), {
+          lastMessage: `📁 ${file.name}`,
+          lastSenderId: user.uid,
+          lastTimestamp: serverTimestamp(),
+          participants: [user.uid, selectedChatUser.uid],
+          isRead: false
+        }, { merge: true });
+      };
+    } catch (err) {
+      console.error("Error uploading file:", err);
+    } finally {
+      setIsUploadingFile(false);
+    }
+  };
+
+  // Calling Logic
+  const initiateCall = async (type: 'voice' | 'video') => {
+    if (!selectedChatUser || !user) return;
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: true, 
+        video: type === 'video' 
+      });
+      setLocalStream(stream);
+
+      const callRef = collection(db, 'calls');
+      const newCall = {
+        callerId: user.uid,
+        receiverId: selectedChatUser.uid,
+        status: 'ringing',
+        type,
+        createdAt: serverTimestamp(),
+      };
+
+      const docRef = await addDoc(callRef, newCall);
+      setActiveCall({ id: docRef.id, ...newCall } as CallSession);
+
+      // WebRTC Setup (Simplified for demo)
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+      peerConnection.current = pc;
+
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+      pc.ontrack = (event) => setRemoteStream(event.streams[0]);
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await updateDoc(docRef, { offer: { type: offer.type, sdp: offer.sdp } });
+
+    } catch (err) {
+      console.error("Error starting call:", err);
+      alert("Could not start call. Check camera/mic permissions.");
+    }
+  };
+
+  const handleAcceptCall = async () => {
+    if (!incomingCall || !user) return;
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: true, 
+        video: incomingCall.type === 'video' 
+      });
+      setLocalStream(stream);
+      setActiveCall(incomingCall);
+      setIncomingCall(null);
+
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+      peerConnection.current = pc;
+
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+      pc.ontrack = (event) => setRemoteStream(event.streams[0]);
+
+      await pc.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      await updateDoc(doc(db, 'calls', incomingCall.id), { 
+        status: 'accepted',
+        answer: { type: answer.type, sdp: answer.sdp }
+      });
+
+    } catch (err) {
+      console.error("Error accepting call:", err);
+      handleDeclineCall();
+    }
+  };
+
+  const handleDeclineCall = async () => {
+    if (incomingCall) {
+      await updateDoc(doc(db, 'calls', incomingCall.id), { status: 'declined' });
+      setIncomingCall(null);
+    }
+  };
+
+  const handleEndCall = async () => {
+    if (activeCall) {
+      await updateDoc(doc(db, 'calls', activeCall.id), { status: 'ended' });
+    }
+    if (localStream) {
+      localStream.getTracks().forEach(track => track.stop());
+    }
+    setLocalStream(null);
+    setRemoteStream(null);
+    setActiveCall(null);
+    if (peerConnection.current) {
+      peerConnection.current.close();
+      peerConnection.current = null;
+    }
+  };
   const [editingPost, setEditingPost] = useState<Post | null>(null);
   const [editCaptionText, setEditCaptionText] = useState('');
   const [isSavingCaption, setIsSavingCaption] = useState(false);
@@ -783,7 +1097,8 @@ function MainApp() {
       text: messageText,
       senderId: user.uid,
       createdAt: serverTimestamp(),
-      status: 'sent'
+      status: 'sent',
+      type: 'text'
     });
 
     await setDoc(doc(db, 'chats', chatId), {
@@ -2385,22 +2700,40 @@ function MainApp() {
             <div className={`flex-1 flex flex-col bg-slate-900/40 ${!selectedChatUser ? 'hidden md:flex' : 'flex'}`}>
               {selectedChatUser ? (
                 <>
-                  <div className="p-4 bg-[#0f172a]/80 border-b border-slate-800 flex items-center gap-3 sticky top-0 z-10">
-                    <button 
-                      onClick={() => setSelectedChatUser(null)}
-                      className="md:hidden p-2 -ml-2 text-slate-500 hover:text-slate-200"
-                    >
-                      <ChevronLeft size={24} />
-                    </button>
-                    {selectedChatUser.photoURL ? (
-                      <img src={selectedChatUser.photoURL} alt={selectedChatUser.name} className="w-10 h-10 rounded-full border border-slate-700 object-cover" referrerPolicy="no-referrer" />
-                    ) : (
-                      <div className="w-10 h-10 rounded-full bg-indigo-900/50 text-indigo-400 flex items-center justify-center font-bold text-lg">
-                        {selectedChatUser.name.charAt(0).toUpperCase()}
+                  <div className="p-4 bg-[#0f172a]/80 border-b border-slate-800 flex items-center justify-between sticky top-0 z-10">
+                    <div className="flex items-center gap-3">
+                      <button 
+                        onClick={() => setSelectedChatUser(null)}
+                        className="md:hidden p-2 -ml-2 text-slate-500 hover:text-slate-200"
+                      >
+                        <ChevronLeft size={24} />
+                      </button>
+                      {selectedChatUser.photoURL ? (
+                        <img src={selectedChatUser.photoURL} alt={selectedChatUser.name} className="w-10 h-10 rounded-full border border-slate-700 object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-indigo-900/50 text-indigo-400 flex items-center justify-center font-bold text-lg">
+                          {selectedChatUser.name.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <div>
+                        <h3 className="font-bold text-white">{selectedChatUser.name}</h3>
                       </div>
-                    )}
-                    <div>
-                      <h3 className="font-bold text-white">{selectedChatUser.name}</h3>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => initiateCall('voice')}
+                        className="p-2 text-slate-400 hover:text-indigo-400 transition-colors"
+                        title="Voice Call"
+                      >
+                        <Phone size={20} />
+                      </button>
+                      <button 
+                        onClick={() => initiateCall('video')}
+                        className="p-2 text-slate-400 hover:text-indigo-400 transition-colors"
+                        title="Video Call"
+                      >
+                        <Video size={20} />
+                      </button>
                     </div>
                   </div>
                   
@@ -2410,7 +2743,27 @@ function MainApp() {
                       return (
                         <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
                           <div className={`max-w-[75%] rounded-2xl px-4 py-2 ${isMe ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-[#0f172a]/80 border border-slate-800 text-slate-200 rounded-bl-sm'}`}>
-                            {msg.text}
+                            {msg.type === 'voice' ? (
+                              <div className="flex items-center gap-3 py-1">
+                                <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+                                  <Mic size={16} />
+                                </div>
+                                <audio src={msg.fileUrl} controls className="h-8 w-40 filter invert brightness-200" />
+                                <span className="text-[10px] opacity-70">{msg.duration}s</span>
+                              </div>
+                            ) : msg.type === 'file' ? (
+                              <a href={msg.fileUrl} download={msg.fileName} className="flex items-center gap-3 py-1 hover:underline">
+                                <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+                                  <Paperclip size={16} />
+                                </div>
+                                <div className="overflow-hidden">
+                                  <div className="text-sm font-medium truncate">{msg.fileName}</div>
+                                  <div className="text-[10px] opacity-70">{(msg.fileSize || 0) / 1024 > 1024 ? `${((msg.fileSize || 0) / (1024 * 1024)).toFixed(1)} MB` : `${((msg.fileSize || 0) / 1024).toFixed(1)} KB`}</div>
+                                </div>
+                              </a>
+                            ) : (
+                              msg.text
+                            )}
                           </div>
                           {isMe && (
                             <div className="mt-1 flex items-center gap-1 text-[10px] text-slate-500">
@@ -2433,16 +2786,42 @@ function MainApp() {
 
                   <div className="p-4 bg-[#0f172a]/80 border-t border-slate-800">
                     <form onSubmit={handleSendMessage} className="flex items-center gap-2">
-                      <input 
-                        type="text"
-                        value={newMessage}
-                        onChange={(e) => setNewMessage(e.target.value)}
-                        placeholder="Type a message..."
-                        className="flex-1 px-4 py-2.5 bg-slate-800/60 border-transparent focus:bg-[#0f172a]/80 border focus:border-indigo-900/300 rounded-full outline-none transition-all"
-                      />
+                      <div className="flex items-center gap-1">
+                        <label className="p-2 text-slate-400 hover:text-indigo-400 cursor-pointer transition-colors">
+                          <Paperclip size={20} />
+                          <input type="file" className="hidden" onChange={handleFileUpload} />
+                        </label>
+                        <button 
+                          type="button"
+                          onMouseDown={startRecording}
+                          onMouseUp={stopRecording}
+                          onMouseLeave={stopRecording}
+                          className={`p-2 transition-colors ${isRecording ? 'text-red-500 animate-pulse' : 'text-slate-400 hover:text-indigo-400'}`}
+                          title="Hold to record voice"
+                        >
+                          <Mic size={20} />
+                        </button>
+                      </div>
+                      
+                      <div className="flex-1 relative">
+                        <input 
+                          type="text"
+                          value={newMessage}
+                          onChange={(e) => setNewMessage(e.target.value)}
+                          placeholder={isRecording ? `Recording... ${recordingDuration}s` : "Type a message..."}
+                          className="w-full px-4 py-2.5 bg-slate-800/60 border-transparent focus:bg-[#0f172a]/80 border focus:border-indigo-900/300 rounded-full outline-none transition-all"
+                          disabled={isRecording}
+                        />
+                        {isUploadingFile && (
+                          <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                            <Loader2 size={16} className="animate-spin text-indigo-400" />
+                          </div>
+                        )}
+                      </div>
+                      
                       <button 
                         type="submit"
-                        disabled={!newMessage.trim()}
+                        disabled={!newMessage.trim() || isRecording || isUploadingFile}
                         className="p-2.5 bg-indigo-500 text-white rounded-full hover:bg-indigo-600 transition-colors disabled:opacity-50"
                       >
                         <Reply size={20} className="rotate-180" />
@@ -3024,6 +3403,125 @@ function MainApp() {
           )}
         </div>
       </nav>
+
+      {/* PWA Install Banner */}
+      <AnimatePresence>
+        {showInstallBanner && (
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            className="fixed bottom-20 left-4 right-4 z-50 bg-indigo-600 text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between"
+          >
+            <div className="flex items-center gap-3">
+              <div className="bg-white/20 p-2 rounded-xl">
+                <Download size={20} />
+              </div>
+              <div>
+                <p className="font-bold text-sm">অ্যাপটি ইনস্টল করুন</p>
+                <p className="text-xs text-indigo-100">সহজ ব্যবহারের জন্য হোম স্ক্রিনে যোগ করুন</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setShowInstallBanner(false)}
+                className="px-3 py-1.5 text-xs font-medium hover:bg-white/10 rounded-lg transition-colors"
+              >
+                পরে
+              </button>
+              <button 
+                onClick={handleInstallClick}
+                className="px-4 py-1.5 bg-white text-indigo-600 text-xs font-bold rounded-lg hover:bg-indigo-50 transition-colors"
+              >
+                ইনস্টল
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Call Overlays */}
+      <AnimatePresence>
+        {incomingCall && (
+          <motion.div 
+            initial={{ y: -100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -100, opacity: 0 }}
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] w-full max-w-sm px-4"
+          >
+            <div className="bg-[#1e293b] border border-indigo-500/30 rounded-2xl p-4 shadow-2xl flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-full bg-indigo-600 flex items-center justify-center text-white animate-pulse">
+                  <PhoneIncoming size={24} />
+                </div>
+                <div>
+                  <h4 className="font-bold text-white">Incoming {incomingCall.type} call</h4>
+                  <p className="text-xs text-slate-400">Someone is calling you...</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={handleDeclineCall} className="p-3 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors">
+                  <PhoneOff size={20} />
+                </button>
+                <button onClick={handleAcceptCall} className="p-3 bg-green-500 text-white rounded-full hover:bg-green-600 transition-colors">
+                  <Phone size={20} />
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {activeCall && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-slate-950 flex flex-col items-center justify-center p-6"
+          >
+            <div className="relative w-full max-w-4xl aspect-video bg-slate-900 rounded-3xl overflow-hidden shadow-2xl border border-slate-800">
+              {activeCall.type === 'video' ? (
+                <>
+                  <video 
+                    autoPlay 
+                    playsInline 
+                    ref={el => { if (el) el.srcObject = remoteStream; }}
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute bottom-4 right-4 w-32 md:w-48 aspect-video bg-slate-800 rounded-xl overflow-hidden border-2 border-indigo-500 shadow-lg">
+                    <video 
+                      autoPlay 
+                      playsInline 
+                      muted 
+                      ref={el => { if (el) el.srcObject = localStream; }}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center gap-6">
+                  <div className="w-32 h-32 rounded-full bg-indigo-600/20 flex items-center justify-center relative">
+                    <div className="absolute inset-0 rounded-full border-4 border-indigo-500/30 animate-ping" />
+                    <Phone size={48} className="text-indigo-400" />
+                  </div>
+                  <div className="text-center">
+                    <h3 className="text-2xl font-bold text-white">Voice Call</h3>
+                    <p className="text-slate-400 mt-2">Connected</p>
+                  </div>
+                </div>
+              )}
+              
+              <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-6">
+                <button 
+                  onClick={handleEndCall}
+                  className="w-16 h-16 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-all hover:scale-110 shadow-xl shadow-red-500/20"
+                >
+                  <PhoneOff size={32} />
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Modal */}
       <AnimatePresence>
