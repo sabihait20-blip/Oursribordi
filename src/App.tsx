@@ -59,6 +59,7 @@ interface UserProfile {
   username?: string;
   savedPosts?: string[];
   isVerified?: boolean;
+  fcmToken?: string;
 }
 
 interface UserPublicProfile {
@@ -66,6 +67,7 @@ interface UserPublicProfile {
   name: string;
   photoURL?: string;
   username?: string;
+  fcmToken?: string;
 }
 
 interface Withdrawal {
@@ -598,6 +600,32 @@ function MainApp() {
       await pc.setLocalDescription(offer);
       await updateDoc(docRef, { offer: { type: offer.type, sdp: offer.sdp } });
 
+      // Send Push Notification for Call
+      try {
+        const recipientDoc = await getDoc(doc(db, 'users', selectedChatUser.uid));
+        const recipientData = recipientDoc.data();
+        if (recipientData?.fcmToken) {
+          await fetch('/api/send-notification', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              token: recipientData.fcmToken,
+              title: `Incoming ${type} call`,
+              body: `${user.displayName || 'Someone'} is calling you...`,
+              data: {
+                type: 'call',
+                callId: docRef.id,
+                callType: type,
+                callerId: user.uid,
+                callerName: user.displayName || 'User'
+              }
+            })
+          });
+        }
+      } catch (error) {
+        console.error('Error sending call notification:', error);
+      }
+
       // Timeout for no answer (30 seconds)
       setTimeout(async () => {
         const snap = await getDoc(docRef);
@@ -715,6 +743,47 @@ function MainApp() {
       peerConnection.current = null;
     }
   };
+  const [isTestingNotification, setIsTestingNotification] = useState(false);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
+
+  useEffect(() => {
+    if ('Notification' in window) {
+      setNotificationPermission(Notification.permission);
+    }
+  }, []);
+
+  const handleTestNotification = async () => {
+    if (!user || !userProfile?.fcmToken) {
+      alert("Notification token not found. Please ensure you have granted notification permission and provided the VAPID key in settings.");
+      return;
+    }
+
+    setIsTestingNotification(true);
+    try {
+      const response = await fetch('/api/send-notification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: userProfile.fcmToken,
+          title: 'Test Notification',
+          body: 'This is a test notification from আমাদের শ্রীবরদী!',
+          data: { type: 'test' }
+        })
+      });
+      const result = await response.json();
+      if (result.success) {
+        alert("Test notification sent! Check your device.");
+      } else {
+        alert("Failed to send test notification: " + result.error);
+      }
+    } catch (error) {
+      console.error('Error sending test notification:', error);
+      alert("Error sending test notification. Check console for details.");
+    } finally {
+      setIsTestingNotification(false);
+    }
+  };
+
   const [editingPost, setEditingPost] = useState<Post | null>(null);
   const [editCaptionText, setEditCaptionText] = useState('');
   const [isSavingCaption, setIsSavingCaption] = useState(false);
@@ -883,18 +952,35 @@ function MainApp() {
           if (permission === 'granted') {
             // Only attempt to get token if a valid-looking VAPID key is provided
             // The previous placeholder was causing an 'atob' error
-            const vapidKey = ''; // User needs to provide a real VAPID key from Firebase Console
+            const vapidKey = import.meta.env.VITE_VAPID_KEY || ''; // User needs to provide a real VAPID key from Firebase Console
             if (vapidKey) {
-              const token = await getToken(messaging, {
-                vapidKey: vapidKey
-              });
-              if (token) {
-                console.log('FCM Token:', token);
-                await setDoc(doc(db, 'users', user.uid), {
-                  uid: user.uid, // Ensure uid is included for security rules
-                  fcmToken: token
-                }, { merge: true });
+              try {
+                const token = await getToken(messaging, {
+                  vapidKey: vapidKey
+                });
+                if (token) {
+                  console.log('FCM Token obtained:', token);
+                  try {
+                    await setDoc(doc(db, 'users', user.uid), {
+                      uid: user.uid,
+                      fcmToken: token
+                    }, { merge: true });
+                    console.log('FCM Token saved to Firestore');
+                  } catch (fsError: any) {
+                    console.error('Error saving FCM token to Firestore:', fsError);
+                    if (fsError.code === 'permission-denied') {
+                      handleFirestoreError(fsError, OperationType.WRITE, `users/${user.uid}`);
+                    }
+                  }
+                }
+              } catch (tokenError) {
+                console.error('Error calling getToken:', tokenError);
+                if (tokenError instanceof Error && tokenError.message.includes('permission')) {
+                  console.warn('FCM Permission Error: Please ensure "Firebase Cloud Messaging API (V1)" is enabled in Google Cloud Console and your VAPID key is correct.');
+                }
               }
+            } else {
+              console.warn('VITE_VAPID_KEY is missing. FCM token will not be generated.');
             }
           }
         } catch (error) {
@@ -2598,6 +2684,55 @@ function MainApp() {
                       >
                         <Share2 size={18} />
                       </button>
+                    </div>
+
+                    <div className="mt-6 p-4 bg-slate-800/40 rounded-2xl border border-slate-700/50 text-left max-w-sm mx-auto">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-sm font-medium text-slate-300 flex items-center gap-2">
+                          <Bell size={14} className={notificationPermission === 'granted' ? 'text-green-400' : 'text-slate-500'} />
+                          Notifications
+                        </span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                          notificationPermission === 'granted' ? 'bg-green-500/10 text-green-400' : 
+                          notificationPermission === 'denied' ? 'bg-red-500/10 text-red-400' : 
+                          'bg-slate-500/10 text-slate-400'
+                        }`}>
+                          {notificationPermission.charAt(0).toUpperCase() + notificationPermission.slice(1)}
+                        </span>
+                      </div>
+                      
+                      {notificationPermission !== 'granted' && (
+                        <button 
+                          onClick={async () => {
+                            const p = await Notification.requestPermission();
+                            setNotificationPermission(p);
+                          }}
+                          className="w-full py-2 bg-indigo-600/20 text-indigo-400 text-xs rounded-xl hover:bg-indigo-600/30 transition-colors font-medium"
+                        >
+                          Enable Notifications
+                        </button>
+                      )}
+                      
+                      {notificationPermission === 'granted' && (
+                        <div className="space-y-2">
+                          {userProfile?.fcmToken ? (
+                            <button 
+                              onClick={handleTestNotification}
+                              disabled={isTestingNotification}
+                              className="w-full py-2 bg-slate-700/40 text-slate-300 text-xs rounded-xl hover:bg-slate-700/60 transition-colors flex items-center justify-center gap-2 font-medium"
+                            >
+                              {isTestingNotification ? <Loader2 size={12} className="animate-spin" /> : <Bell size={12} />}
+                              Send Test Notification
+                            </button>
+                          ) : (
+                            <div className="p-2 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                              <p className="text-[10px] text-amber-400/90 leading-relaxed">
+                                <span className="font-bold">Token not found:</span> Please ensure you have added the <code className="bg-slate-900 px-1 rounded">VITE_VAPID_KEY</code> in settings and refreshed the page.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </>
                 ) : (

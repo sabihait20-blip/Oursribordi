@@ -123,7 +123,7 @@ service cloud.firestore {
     }
 
     function isValidUser(data) {
-      return hasOnlyAllowedFields(['uid', 'name', 'email', 'balance', 'photoURL', 'username', 'updatedAt', 'fcmToken', 'role', 'savedPosts', 'isVerified']) &&
+      return hasOnlyAllowedFields(['uid', 'name', 'email', 'balance', 'photoURL', 'username', 'updatedAt', 'fcmToken', 'role', 'savedPosts', 'isVerified', 'followersCount', 'followingCount', 'createdAt']) &&
              hasRequiredFields(['uid']) &&
              data.uid is string &&
              (!('name' in data) || (data.name is string && data.name.size() <= 100)) &&
@@ -132,10 +132,13 @@ service cloud.firestore {
              (!('photoURL' in data) || data.photoURL is string) &&
              (!('username' in data) || (data.username is string && data.username.matches("^[a-zA-Z0-9_]{3,20}$"))) &&
              (!('updatedAt' in data) || data.updatedAt is timestamp) &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
              (!('fcmToken' in data) || data.fcmToken is string) &&
              (!('role' in data) || data.role in ['admin', 'client']) &&
              (!('savedPosts' in data) || data.savedPosts is list) &&
-             (!('isVerified' in data) || data.isVerified is bool);
+             (!('isVerified' in data) || data.isVerified is bool) &&
+             (!('followersCount' in data) || data.followersCount is number) &&
+             (!('followingCount' in data) || data.followingCount is number);
     }
 
     function isValidWithdrawal(data) {
@@ -153,7 +156,7 @@ service cloud.firestore {
     }
 
     function isValidUserPublic(data) {
-      return hasOnlyAllowedFields(['uid', 'name', 'photoURL', 'username', 'balance', 'isVerified']) &&
+      return hasOnlyAllowedFields(['uid', 'name', 'photoURL', 'username', 'balance', 'isVerified', 'createdAt']) &&
              hasRequiredFields(['uid', 'name']) &&
              data.uid is string &&
              data.name is string &&
@@ -161,7 +164,8 @@ service cloud.firestore {
              (!('photoURL' in data) || data.photoURL is string) &&
              (!('username' in data) || (data.username is string && data.username.matches("^[a-zA-Z0-9_]{3,20}$"))) &&
              (!('balance' in data) || data.balance is number) &&
-             (!('isVerified' in data) || data.isVerified is bool);
+             (!('isVerified' in data) || data.isVerified is bool) &&
+             (!('createdAt' in data) || data.createdAt is timestamp);
     }
 
     function isValidMessage(data) {
@@ -324,11 +328,11 @@ service cloud.firestore {
                     uidUnchanged() && 
                     (!('role' in request.resource.data) || 
                      request.resource.data.role == 'client' || 
-                     ('email' in request.auth.token && request.auth.token.email.lower() == "sabihait20@gmail.com"));
+                     isAdmin());
       allow update: if (isOwner(userId) || isAdmin()) && 
                     isValidUser(request.resource.data) && 
                     uidNotModified() && 
-                    (isAdmin() || (request.resource.data.role == resource.data.role || !('role' in resource.data)));
+                    (isAdmin() || !('role' in request.resource.data) || !('role' in resource.data) || request.resource.data.role == resource.data.role);
     }
 
     match /withdrawals/{withdrawalId} {

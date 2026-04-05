@@ -97,8 +97,8 @@ async function startServer() {
         data: data || {},
         webpush: {
           notification: {
-            icon: '/firebase-logo.png',
-            click_action: 'https://ais-pre-4evteq6f7cam3x5m6neoco-68546391801.asia-southeast1.run.app'
+            // icon: '/pwa-192x192.png', // Use PWA icon if available
+            click_action: req.headers.origin || 'https://ais-pre-4evteq6f7cam3x5m6neoco-68546391801.asia-southeast1.run.app'
           }
         }
       };

@@ -1,0 +1,8 @@
+{
+	"appId": "com.amadersreebordi.app",
+	"appName": "আমাদের শ্রীবরদী",
+	"webDir": "dist",
+	"server": {
+		"androidScheme": "https"
+	}
+}

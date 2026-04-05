@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">আমাদের শ্রীবরদী</string>
+    <string name="title_activity_main">আমাদের শ্রীবরদী</string>
+    <string name="package_name">com.amadersreebordi.app</string>
+    <string name="custom_url_scheme">com.amadersreebordi.app</string>
+</resources>
