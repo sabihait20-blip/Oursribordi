@@ -97,11 +97,27 @@ interface CallSession {
   id: string;
   callerId: string;
   receiverId: string;
-  status: 'ringing' | 'accepted' | 'declined' | 'ended';
+  callerName?: string;
+  callerPhoto?: string;
+  receiverName?: string;
+  receiverPhoto?: string;
+  status: 'ringing' | 'accepted' | 'declined' | 'ended' | 'busy' | 'no-answer';
   type: 'voice' | 'video';
   createdAt: any;
   offer?: any;
   answer?: any;
+}
+
+interface CallLog {
+  id: string;
+  callerId: string;
+  receiverId: string;
+  callerName: string;
+  receiverName: string;
+  type: 'voice' | 'video';
+  status: 'missed' | 'received' | 'dialed';
+  duration?: number;
+  createdAt: any;
 }
 
 interface ChatConversation {
@@ -302,12 +318,24 @@ function MainApp() {
     if (!activeCall || !user) return;
 
     const unsubscribe = onSnapshot(doc(db, 'calls', activeCall.id), (snapshot) => {
-      const data = snapshot.data() as CallSession;
-      if (data?.status === 'ended' || data?.status === 'declined') {
+      const data = snapshot.data() as any;
+      if (!data) return;
+
+      if (data.status === 'ended' || data.status === 'declined' || data.status === 'busy' || data.status === 'no-answer') {
         handleEndCall();
       }
-      if (data?.answer && !peerConnection.current?.remoteDescription) {
+
+      if (data.answer && !peerConnection.current?.remoteDescription) {
         peerConnection.current?.setRemoteDescription(new RTCSessionDescription(data.answer));
+      }
+
+      // Handle ICE candidates from the other party
+      const otherId = data.callerId === user.uid ? data.receiverId : data.callerId;
+      const candidates = data.iceCandidates?.[otherId];
+      if (candidates && peerConnection.current?.remoteDescription) {
+        candidates.forEach((candidate: any) => {
+          peerConnection.current?.addIceCandidate(new RTCIceCandidate(candidate)).catch(e => console.error("Error adding ICE candidate", e));
+        });
       }
     });
 
@@ -438,9 +466,92 @@ function MainApp() {
     }
   };
 
+  const [isMuted, setIsMuted] = useState(false);
+  const [isCameraOff, setIsCameraOff] = useState(false);
+  const [callDuration, setCallDuration] = useState(0);
+  const durationInterval = useRef<any>(null);
+  const ringtoneRef = useRef<HTMLAudioElement | null>(null);
+  const dialingRef = useRef<HTMLAudioElement | null>(null);
+
+  // Audio URLs (Using public assets or base64)
+  const RINGTONE_URL = 'https://assets.mixkit.co/active_storage/sfx/1359/1359-preview.mp3';
+  const DIALING_URL = 'https://assets.mixkit.co/active_storage/sfx/1358/1358-preview.mp3';
+
+  useEffect(() => {
+    if (incomingCall) {
+      ringtoneRef.current = new Audio(RINGTONE_URL);
+      ringtoneRef.current.loop = true;
+      ringtoneRef.current.play().catch(e => console.log("Audio play blocked", e));
+    } else {
+      ringtoneRef.current?.pause();
+      ringtoneRef.current = null;
+    }
+    return () => ringtoneRef.current?.pause();
+  }, [incomingCall]);
+
+  useEffect(() => {
+    if (activeCall && activeCall.status === 'ringing' && activeCall.callerId === user?.uid) {
+      dialingRef.current = new Audio(DIALING_URL);
+      dialingRef.current.loop = true;
+      dialingRef.current.play().catch(e => console.log("Audio play blocked", e));
+    } else {
+      dialingRef.current?.pause();
+      dialingRef.current = null;
+    }
+    return () => dialingRef.current?.pause();
+  }, [activeCall, user]);
+
+  useEffect(() => {
+    if (activeCall && activeCall.status === 'accepted') {
+      durationInterval.current = setInterval(() => {
+        setCallDuration(prev => prev + 1);
+      }, 1000);
+    } else {
+      clearInterval(durationInterval.current);
+      setCallDuration(0);
+    }
+    return () => clearInterval(durationInterval.current);
+  }, [activeCall]);
+
+  const toggleMute = () => {
+    if (localStream) {
+      localStream.getAudioTracks().forEach(track => {
+        track.enabled = !track.enabled;
+      });
+      setIsMuted(!isMuted);
+    }
+  };
+
+  const toggleCamera = () => {
+    if (localStream) {
+      localStream.getVideoTracks().forEach(track => {
+        track.enabled = !track.enabled;
+      });
+      setIsCameraOff(!isCameraOff);
+    }
+  };
+
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
   // Calling Logic
   const initiateCall = async (type: 'voice' | 'video') => {
     if (!selectedChatUser || !user) return;
+
+    // Check if receiver is busy (simplified check)
+    const busyCheck = await getDocs(query(
+      collection(db, 'calls'),
+      where('receiverId', '==', selectedChatUser.uid),
+      where('status', 'in', ['ringing', 'accepted'])
+    ));
+
+    if (!busyCheck.empty) {
+      alert(`${selectedChatUser.name} is currently in another call.`);
+      return;
+    }
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -452,7 +563,11 @@ function MainApp() {
       const callRef = collection(db, 'calls');
       const newCall = {
         callerId: user.uid,
+        callerName: user.displayName || 'User',
+        callerPhoto: user.photoURL || '',
         receiverId: selectedChatUser.uid,
+        receiverName: selectedChatUser.name,
+        receiverPhoto: selectedChatUser.photoURL || '',
         status: 'ringing',
         type,
         createdAt: serverTimestamp(),
@@ -461,7 +576,7 @@ function MainApp() {
       const docRef = await addDoc(callRef, newCall);
       setActiveCall({ id: docRef.id, ...newCall } as CallSession);
 
-      // WebRTC Setup (Simplified for demo)
+      // WebRTC Setup
       const pc = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
       });
@@ -470,9 +585,27 @@ function MainApp() {
       stream.getTracks().forEach(track => pc.addTrack(track, stream));
       pc.ontrack = (event) => setRemoteStream(event.streams[0]);
 
+      // ICE Candidates
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          updateDoc(docRef, { 
+            [`iceCandidates.${user.uid}`]: arrayUnion(event.candidate.toJSON()) 
+          });
+        }
+      };
+
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       await updateDoc(docRef, { offer: { type: offer.type, sdp: offer.sdp } });
+
+      // Timeout for no answer (30 seconds)
+      setTimeout(async () => {
+        const snap = await getDoc(docRef);
+        if (snap.exists() && snap.data().status === 'ringing') {
+          await updateDoc(docRef, { status: 'no-answer' });
+          handleEndCall();
+        }
+      }, 30000);
 
     } catch (err) {
       console.error("Error starting call:", err);
@@ -500,6 +633,15 @@ function MainApp() {
       stream.getTracks().forEach(track => pc.addTrack(track, stream));
       pc.ontrack = (event) => setRemoteStream(event.streams[0]);
 
+      // ICE Candidates
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          updateDoc(doc(db, 'calls', incomingCall.id), { 
+            [`iceCandidates.${user.uid}`]: arrayUnion(event.candidate.toJSON()) 
+          });
+        }
+      };
+
       await pc.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
@@ -518,20 +660,56 @@ function MainApp() {
   const handleDeclineCall = async () => {
     if (incomingCall) {
       await updateDoc(doc(db, 'calls', incomingCall.id), { status: 'declined' });
+      
+      // Log missed call
+      await addDoc(collection(db, 'call_logs'), {
+        callerId: incomingCall.callerId,
+        receiverId: incomingCall.receiverId,
+        callerName: incomingCall.callerName || 'Unknown',
+        receiverName: incomingCall.receiverName || 'Unknown',
+        type: incomingCall.type,
+        status: 'missed',
+        createdAt: serverTimestamp()
+      });
+
       setIncomingCall(null);
     }
   };
 
   const handleEndCall = async () => {
     if (activeCall) {
-      await updateDoc(doc(db, 'calls', activeCall.id), { status: 'ended' });
+      const callRef = doc(db, 'calls', activeCall.id);
+      const snap = await getDoc(callRef);
+      const data = snap.data() as CallSession;
+
+      if (data?.status !== 'ended') {
+        await updateDoc(callRef, { status: 'ended' });
+      }
+
+      // Log call
+      if (data) {
+        await addDoc(collection(db, 'call_logs'), {
+          callerId: data.callerId,
+          receiverId: data.receiverId,
+          callerName: data.callerName || 'Unknown',
+          receiverName: data.receiverName || 'Unknown',
+          type: data.type,
+          status: data.callerId === user?.uid ? 'dialed' : 'received',
+          duration: callDuration,
+          createdAt: serverTimestamp()
+        });
+      }
     }
+
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop());
     }
     setLocalStream(null);
     setRemoteStream(null);
     setActiveCall(null);
+    setIsMuted(false);
+    setIsCameraOff(false);
+    setCallDuration(0);
     if (peerConnection.current) {
       peerConnection.current.close();
       peerConnection.current = null;
@@ -3447,23 +3625,35 @@ function MainApp() {
             initial={{ y: -100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: -100, opacity: 0 }}
-            className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] w-full max-w-sm px-4"
+            className="fixed top-4 left-4 right-4 z-[100] max-w-md mx-auto"
           >
             <div className="bg-[#1e293b] border border-indigo-500/30 rounded-2xl p-4 shadow-2xl flex items-center justify-between gap-4">
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-full bg-indigo-600 flex items-center justify-center text-white animate-pulse">
-                  <PhoneIncoming size={24} />
+                <div className="w-12 h-12 rounded-full overflow-hidden bg-indigo-600 border-2 border-indigo-500/50">
+                  {incomingCall.callerPhoto ? (
+                    <img src={incomingCall.callerPhoto} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-white font-bold">
+                      {incomingCall.callerName?.charAt(0)}
+                    </div>
+                  )}
                 </div>
                 <div>
-                  <h4 className="font-bold text-white">Incoming {incomingCall.type} call</h4>
-                  <p className="text-xs text-slate-400">Someone is calling you...</p>
+                  <h4 className="font-bold text-white leading-tight">{incomingCall.callerName}</h4>
+                  <p className="text-xs text-indigo-400 animate-pulse">Incoming {incomingCall.type} call...</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={handleDeclineCall} className="p-3 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors">
+                <button 
+                  onClick={handleDeclineCall} 
+                  className="p-3 bg-red-500/20 text-red-500 rounded-full hover:bg-red-500 hover:text-white transition-all border border-red-500/30"
+                >
                   <PhoneOff size={20} />
                 </button>
-                <button onClick={handleAcceptCall} className="p-3 bg-green-500 text-white rounded-full hover:bg-green-600 transition-colors">
+                <button 
+                  onClick={handleAcceptCall} 
+                  className="p-3 bg-green-500 text-white rounded-full hover:bg-green-600 transition-all shadow-lg shadow-green-500/20"
+                >
                   <Phone size={20} />
                 </button>
               </div>
@@ -3473,51 +3663,110 @@ function MainApp() {
 
         {activeCall && (
           <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] bg-slate-950 flex flex-col items-center justify-center p-6"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.05 }}
+            className="fixed inset-0 z-[100] bg-[#020617] flex flex-col items-center justify-between p-8 overflow-hidden"
           >
-            <div className="relative w-full max-w-4xl aspect-video bg-slate-900 rounded-3xl overflow-hidden shadow-2xl border border-slate-800">
-              {activeCall.type === 'video' ? (
-                <>
+            {/* Background Blur Effect */}
+            <div className="absolute inset-0 opacity-20 blur-3xl pointer-events-none">
+              <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-indigo-600 rounded-full mix-blend-multiply filter blur-3xl animate-blob" />
+              <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-600 rounded-full mix-blend-multiply filter blur-3xl animate-blob animation-delay-2000" />
+            </div>
+
+            {/* Call Info Header */}
+            <div className="relative z-10 text-center mt-12">
+              <div className="w-32 h-32 rounded-full mx-auto mb-6 border-4 border-slate-800 p-1 shadow-2xl relative">
+                <div className="w-full h-full rounded-full overflow-hidden bg-slate-800">
+                  {activeCall.callerId === user?.uid ? (
+                    activeCall.receiverPhoto ? (
+                      <img src={activeCall.receiverPhoto} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-3xl text-white font-bold">
+                        {activeCall.receiverName?.charAt(0)}
+                      </div>
+                    )
+                  ) : (
+                    activeCall.callerPhoto ? (
+                      <img src={activeCall.callerPhoto} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-3xl text-white font-bold">
+                        {activeCall.callerName?.charAt(0)}
+                      </div>
+                    )
+                  )}
+                </div>
+                {activeCall.status === 'ringing' && (
+                  <div className="absolute inset-0 rounded-full border-4 border-indigo-500 animate-ping opacity-20" />
+                )}
+              </div>
+              <h2 className="text-3xl font-bold text-white mb-2">
+                {activeCall.callerId === user?.uid ? activeCall.receiverName : activeCall.callerName}
+              </h2>
+              <p className="text-indigo-400 font-medium tracking-wide uppercase text-sm">
+                {activeCall.status === 'ringing' ? 'Ringing...' : formatDuration(callDuration)}
+              </p>
+            </div>
+
+            {/* Video Streams Container */}
+            {activeCall.type === 'video' && (
+              <div className="relative z-10 w-full max-w-4xl aspect-video bg-slate-900/50 rounded-3xl overflow-hidden shadow-2xl border border-slate-800/50 backdrop-blur-sm my-8">
+                {remoteStream ? (
                   <video 
                     autoPlay 
                     playsInline 
                     ref={el => { if (el) el.srcObject = remoteStream; }}
                     className="w-full h-full object-cover"
                   />
-                  <div className="absolute bottom-4 right-4 w-32 md:w-48 aspect-video bg-slate-800 rounded-xl overflow-hidden border-2 border-indigo-500 shadow-lg">
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <Loader2 className="text-indigo-500 animate-spin" size={48} />
+                  </div>
+                )}
+                
+                {/* Local Video Preview (Picture-in-Picture) */}
+                <div className="absolute bottom-4 right-4 w-32 md:w-48 aspect-video bg-slate-800 rounded-2xl overflow-hidden border-2 border-slate-700 shadow-xl">
+                  {localStream && !isCameraOff ? (
                     <video 
                       autoPlay 
                       playsInline 
-                      muted 
+                      muted
                       ref={el => { if (el) el.srcObject = localStream; }}
                       className="w-full h-full object-cover"
                     />
-                  </div>
-                </>
-              ) : (
-                <div className="w-full h-full flex flex-col items-center justify-center gap-6">
-                  <div className="w-32 h-32 rounded-full bg-indigo-600/20 flex items-center justify-center relative">
-                    <div className="absolute inset-0 rounded-full border-4 border-indigo-500/30 animate-ping" />
-                    <Phone size={48} className="text-indigo-400" />
-                  </div>
-                  <div className="text-center">
-                    <h3 className="text-2xl font-bold text-white">Voice Call</h3>
-                    <p className="text-slate-400 mt-2">Connected</p>
-                  </div>
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-slate-800">
+                      <UserIcon className="text-slate-600" size={32} />
+                    </div>
+                  )}
                 </div>
-              )}
-              
-              <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-6">
-                <button 
-                  onClick={handleEndCall}
-                  className="w-16 h-16 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-all hover:scale-110 shadow-xl shadow-red-500/20"
-                >
-                  <PhoneOff size={32} />
-                </button>
               </div>
+            )}
+
+            {/* Call Controls */}
+            <div className="relative z-10 flex items-center gap-6 mb-12">
+              <button 
+                onClick={toggleMute}
+                className={`p-5 rounded-full transition-all border ${isMuted ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/50 text-white border-slate-700 hover:bg-slate-700'}`}
+              >
+                {isMuted ? <Mic size={28} /> : <Mic size={28} />}
+              </button>
+              
+              {activeCall.type === 'video' && (
+                <button 
+                  onClick={toggleCamera}
+                  className={`p-5 rounded-full transition-all border ${isCameraOff ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/50 text-white border-slate-700 hover:bg-slate-700'}`}
+                >
+                  <Video size={28} />
+                </button>
+              )}
+
+              <button 
+                onClick={handleEndCall}
+                className="p-6 bg-red-500 text-white rounded-full hover:bg-red-600 transition-all shadow-xl shadow-red-500/30 hover:scale-110 active:scale-95"
+              >
+                <PhoneOff size={32} />
+              </button>
             </div>
           </motion.div>
         )}
