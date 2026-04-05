@@ -186,15 +186,20 @@ service cloud.firestore {
     }
 
     function isValidCall(data) {
-      return hasOnlyAllowedFields(['callerId', 'receiverId', 'status', 'type', 'createdAt', 'offer', 'answer']) &&
+      return hasOnlyAllowedFields(['callerId', 'receiverId', 'status', 'type', 'createdAt', 'offer', 'answer', 'callerName', 'callerPhoto', 'receiverName', 'receiverPhoto', 'iceCandidates']) &&
              hasRequiredFields(['callerId', 'receiverId', 'status', 'type', 'createdAt']) &&
              data.callerId is string &&
              data.receiverId is string &&
-             data.status in ['ringing', 'accepted', 'declined', 'ended'] &&
+             data.status in ['ringing', 'accepted', 'declined', 'ended', 'no-answer'] &&
              data.type in ['voice', 'video'] &&
              data.createdAt is timestamp &&
              (!('offer' in data) || data.offer is map) &&
-             (!('answer' in data) || data.answer is map);
+             (!('answer' in data) || data.answer is map) &&
+             (!('callerName' in data) || data.callerName is string) &&
+             (!('callerPhoto' in data) || data.callerPhoto is string) &&
+             (!('receiverName' in data) || data.receiverName is string) &&
+             (!('receiverPhoto' in data) || data.receiverPhoto is string) &&
+             (!('iceCandidates' in data) || data.iceCandidates is map);
     }
 
     function isValidFollower(data) {
@@ -247,9 +252,30 @@ service cloud.firestore {
              data.senderId is string;
     }
 
+    function isValidCallLog(data) {
+      return hasOnlyAllowedFields(['callerId', 'receiverId', 'callerName', 'receiverName', 'type', 'status', 'duration', 'createdAt']) &&
+             hasRequiredFields(['callerId', 'receiverId', 'type', 'status', 'createdAt']) &&
+             data.callerId is string &&
+             data.receiverId is string &&
+             data.type in ['voice', 'video'] &&
+             data.status in ['missed', 'dialed', 'received'] &&
+             data.createdAt is timestamp &&
+             (!('callerName' in data) || data.callerName is string) &&
+             (!('receiverName' in data) || data.receiverName is string) &&
+             (!('duration' in data) || data.duration is number);
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
+
+    match /call_logs/{logId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.callerId || request.auth.uid == resource.data.receiverId);
+      allow create: if isAuthenticated() && 
+                    isValidCallLog(request.resource.data) && 
+                    (request.auth.uid == request.resource.data.callerId || request.auth.uid == request.resource.data.receiverId) &&
+                    request.resource.data.createdAt == request.time;
+    }
 
     match /global_notifications/{notificationId} {
       allow read: if true;

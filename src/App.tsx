@@ -576,18 +576,6 @@ function MainApp() {
   const initiateCall = async (type: 'voice' | 'video') => {
     if (!selectedChatUser || !user) return;
 
-    // Check if receiver is busy (simplified check)
-    const busyCheck = await getDocs(query(
-      collection(db, 'calls'),
-      where('receiverId', '==', selectedChatUser.uid),
-      where('status', 'in', ['ringing', 'accepted'])
-    ));
-
-    if (!busyCheck.empty) {
-      alert(`${selectedChatUser.name} is currently in another call.`);
-      return;
-    }
-
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: true, 
