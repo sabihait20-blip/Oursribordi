@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import React, { useState, useEffect, useRef, ErrorInfo, ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, useParams, useNavigate, Link } from 'react-router-dom';
-import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search, Edit2, UserPlus, UserMinus, Bookmark, Shield, Trophy, Award, Bell, Camera, Eye, AtSign, ShoppingBag, Store, ShoppingCart, Users, BarChart3, Megaphone, FileText, Mic, Phone, Paperclip, Video, PhoneOff, PhoneIncoming, PhoneOutgoing } from 'lucide-react';
+import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search, Edit2, UserPlus, UserMinus, Bookmark, Shield, Trophy, Award, Bell, Camera, Eye, AtSign, ShoppingBag, Store, ShoppingCart, Users, BarChart3, Megaphone, FileText, Mic, MicOff, Phone, Paperclip, Video, VideoOff, SwitchCamera, PhoneOff, PhoneIncoming, PhoneOutgoing } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, addDoc, onSnapshot, query, serverTimestamp, Timestamp, deleteDoc, doc, where, or, updateDoc, arrayUnion, arrayRemove, orderBy, getDoc, getDocs, setDoc, increment } from 'firebase/firestore';
 import { onAuthStateChanged, User, updateProfile } from 'firebase/auth';
@@ -470,6 +470,7 @@ function MainApp() {
 
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [callDuration, setCallDuration] = useState(0);
   const durationInterval = useRef<any>(null);
   const ringtoneRef = useRef<HTMLAudioElement | null>(null);
@@ -533,6 +534,38 @@ function MainApp() {
     }
   };
 
+  const switchCamera = async () => {
+    if (!localStream || activeCall?.type !== 'video') return;
+    
+    const newFacingMode = facingMode === 'user' ? 'environment' : 'user';
+    setFacingMode(newFacingMode);
+    
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        audio: !isMuted,
+        video: { facingMode: newFacingMode }
+      });
+      
+      const videoTrack = newStream.getVideoTracks()[0];
+      const oldVideoTrack = localStream.getVideoTracks()[0];
+      
+      if (videoTrack && oldVideoTrack) {
+        localStream.removeTrack(oldVideoTrack);
+        localStream.addTrack(videoTrack);
+        oldVideoTrack.stop();
+        
+        if (peerConnection.current) {
+          const sender = peerConnection.current.getSenders().find(s => s.track?.kind === 'video');
+          if (sender) {
+            sender.replaceTrack(videoTrack);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Error switching camera:", err);
+    }
+  };
+
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -558,7 +591,7 @@ function MainApp() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: true, 
-        video: type === 'video' 
+        video: type === 'video' ? { facingMode } : false
       });
       setLocalStream(stream);
 
@@ -647,7 +680,7 @@ function MainApp() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: true, 
-        video: incomingCall.type === 'video' 
+        video: incomingCall.type === 'video' ? { facingMode } : false
       });
       setLocalStream(stream);
       setActiveCall(incomingCall);
@@ -3761,40 +3794,59 @@ function MainApp() {
       <AnimatePresence>
         {incomingCall && (
           <motion.div 
-            initial={{ y: -100, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: -100, opacity: 0 }}
-            className="fixed top-4 left-4 right-4 z-[100] max-w-md mx-auto"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.05 }}
+            className="fixed inset-0 z-[100] bg-[#020617] flex flex-col items-center justify-between overflow-hidden"
           >
-            <div className="bg-[#1e293b] border border-indigo-500/30 rounded-2xl p-4 shadow-2xl flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-full overflow-hidden bg-indigo-600 border-2 border-indigo-500/50">
+            {/* Background Blur Effect */}
+            <div className="absolute inset-0 opacity-20 blur-3xl pointer-events-none">
+              <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-indigo-600 rounded-full mix-blend-multiply filter blur-3xl animate-blob" />
+              <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-600 rounded-full mix-blend-multiply filter blur-3xl animate-blob animation-delay-2000" />
+            </div>
+
+            {/* Call Info Header */}
+            <div className="relative z-10 text-center mt-24 w-full">
+              <div className="w-32 h-32 rounded-full mx-auto mb-6 border-4 border-slate-800 p-1 shadow-2xl relative">
+                <div className="w-full h-full rounded-full overflow-hidden bg-slate-800">
                   {incomingCall.callerPhoto ? (
                     <img src={incomingCall.callerPhoto} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center text-white font-bold">
+                    <div className="w-full h-full flex items-center justify-center text-3xl text-white font-bold">
                       {incomingCall.callerName?.charAt(0)}
                     </div>
                   )}
                 </div>
-                <div>
-                  <h4 className="font-bold text-white leading-tight">{incomingCall.callerName}</h4>
-                  <p className="text-xs text-indigo-400 animate-pulse">Incoming {incomingCall.type} call...</p>
-                </div>
+                <div className="absolute inset-0 rounded-full border-4 border-indigo-500 animate-ping opacity-20" />
               </div>
-              <div className="flex items-center gap-2">
+              <h2 className="text-3xl font-bold text-white mb-2 drop-shadow-md">
+                {incomingCall.callerName}
+              </h2>
+              <p className="text-indigo-300 font-medium tracking-wide uppercase text-sm drop-shadow-md animate-pulse">
+                Incoming {incomingCall.type} call...
+              </p>
+            </div>
+
+            {/* Call Controls */}
+            <div className="relative z-10 flex items-center justify-center gap-12 pb-24 w-full">
+              <div className="flex flex-col items-center gap-2">
                 <button 
                   onClick={handleDeclineCall} 
-                  className="p-3 bg-red-500/20 text-red-500 rounded-full hover:bg-red-500 hover:text-white transition-all border border-red-500/30"
+                  className="p-5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-all shadow-xl shadow-red-500/30 hover:scale-110 active:scale-95"
                 >
-                  <PhoneOff size={20} />
+                  <PhoneOff size={32} />
                 </button>
+                <span className="text-white/70 text-sm font-medium">Decline</span>
+              </div>
+              
+              <div className="flex flex-col items-center gap-2">
                 <button 
                   onClick={handleAcceptCall} 
-                  className="p-3 bg-green-500 text-white rounded-full hover:bg-green-600 transition-all shadow-lg shadow-green-500/20"
+                  className="p-5 bg-green-500 text-white rounded-full hover:bg-green-600 transition-all shadow-xl shadow-green-500/30 hover:scale-110 active:scale-95 animate-bounce"
                 >
-                  <Phone size={20} />
+                  <Phone size={32} className="animate-pulse" />
                 </button>
+                <span className="text-white/70 text-sm font-medium">Accept</span>
               </div>
             </div>
           </motion.div>
@@ -3805,51 +3857,19 @@ function MainApp() {
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 1.05 }}
-            className="fixed inset-0 z-[100] bg-[#020617] flex flex-col items-center justify-between p-8 overflow-hidden"
+            className="fixed inset-0 z-[100] bg-[#020617] flex flex-col items-center justify-between overflow-hidden"
           >
-            {/* Background Blur Effect */}
-            <div className="absolute inset-0 opacity-20 blur-3xl pointer-events-none">
-              <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-indigo-600 rounded-full mix-blend-multiply filter blur-3xl animate-blob" />
-              <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-600 rounded-full mix-blend-multiply filter blur-3xl animate-blob animation-delay-2000" />
-            </div>
-
-            {/* Call Info Header */}
-            <div className="relative z-10 text-center mt-12">
-              <div className="w-32 h-32 rounded-full mx-auto mb-6 border-4 border-slate-800 p-1 shadow-2xl relative">
-                <div className="w-full h-full rounded-full overflow-hidden bg-slate-800">
-                  {activeCall.callerId === user?.uid ? (
-                    activeCall.receiverPhoto ? (
-                      <img src={activeCall.receiverPhoto} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-3xl text-white font-bold">
-                        {activeCall.receiverName?.charAt(0)}
-                      </div>
-                    )
-                  ) : (
-                    activeCall.callerPhoto ? (
-                      <img src={activeCall.callerPhoto} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-3xl text-white font-bold">
-                        {activeCall.callerName?.charAt(0)}
-                      </div>
-                    )
-                  )}
-                </div>
-                {activeCall.status === 'ringing' && (
-                  <div className="absolute inset-0 rounded-full border-4 border-indigo-500 animate-ping opacity-20" />
-                )}
+            {/* Background Blur Effect for Voice Calls */}
+            {activeCall.type === 'voice' && (
+              <div className="absolute inset-0 opacity-20 blur-3xl pointer-events-none">
+                <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-indigo-600 rounded-full mix-blend-multiply filter blur-3xl animate-blob" />
+                <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-600 rounded-full mix-blend-multiply filter blur-3xl animate-blob animation-delay-2000" />
               </div>
-              <h2 className="text-3xl font-bold text-white mb-2">
-                {activeCall.callerId === user?.uid ? activeCall.receiverName : activeCall.callerName}
-              </h2>
-              <p className="text-indigo-400 font-medium tracking-wide uppercase text-sm">
-                {activeCall.status === 'ringing' ? 'Ringing...' : formatDuration(callDuration)}
-              </p>
-            </div>
+            )}
 
-            {/* Video Streams Container */}
+            {/* Video Streams Container (Full Screen for Remote) */}
             {activeCall.type === 'video' && (
-              <div className="relative z-10 w-full max-w-4xl aspect-video bg-slate-900/50 rounded-3xl overflow-hidden shadow-2xl border border-slate-800/50 backdrop-blur-sm my-8">
+              <div className="absolute inset-0 z-0 bg-black">
                 {remoteStream ? (
                   <video 
                     autoPlay 
@@ -3864,7 +3884,11 @@ function MainApp() {
                 )}
                 
                 {/* Local Video Preview (Picture-in-Picture) */}
-                <div className="absolute bottom-4 right-4 w-32 md:w-48 aspect-video bg-slate-800 rounded-2xl overflow-hidden border-2 border-slate-700 shadow-xl">
+                <motion.div 
+                  drag
+                  dragConstraints={{ left: 16, right: window.innerWidth - 144, top: 16, bottom: window.innerHeight - 200 }}
+                  className="absolute top-4 right-4 w-28 md:w-40 aspect-[3/4] bg-slate-800 rounded-xl overflow-hidden shadow-2xl border-2 border-slate-700/50 z-20 cursor-move"
+                >
                   {localStream && !isCameraOff ? (
                     <video 
                       autoPlay 
@@ -3875,36 +3899,80 @@ function MainApp() {
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center bg-slate-800">
-                      <UserIcon className="text-slate-600" size={32} />
+                      <UserIcon className="text-slate-500" size={32} />
                     </div>
                   )}
-                </div>
+                </motion.div>
               </div>
             )}
 
+            {/* Call Info Header */}
+            <div className={`relative z-10 text-center mt-16 ${activeCall.type === 'video' ? 'bg-gradient-to-b from-black/70 to-transparent w-full pt-8 pb-12 absolute top-0 left-0' : ''}`}>
+              {activeCall.type === 'voice' && (
+                <div className="w-32 h-32 rounded-full mx-auto mb-6 border-4 border-slate-800 p-1 shadow-2xl relative">
+                  <div className="w-full h-full rounded-full overflow-hidden bg-slate-800">
+                    {activeCall.callerId === user?.uid ? (
+                      activeCall.receiverPhoto ? (
+                        <img src={activeCall.receiverPhoto} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-3xl text-white font-bold">
+                          {activeCall.receiverName?.charAt(0)}
+                        </div>
+                      )
+                    ) : (
+                      activeCall.callerPhoto ? (
+                        <img src={activeCall.callerPhoto} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-3xl text-white font-bold">
+                          {activeCall.callerName?.charAt(0)}
+                        </div>
+                      )
+                    )}
+                  </div>
+                  {activeCall.status === 'ringing' && (
+                    <div className="absolute inset-0 rounded-full border-4 border-indigo-500 animate-ping opacity-20" />
+                  )}
+                </div>
+              )}
+              <h2 className="text-3xl font-bold text-white mb-2 drop-shadow-md">
+                {activeCall.callerId === user?.uid ? activeCall.receiverName : activeCall.callerName}
+              </h2>
+              <p className="text-indigo-300 font-medium tracking-wide uppercase text-sm drop-shadow-md">
+                {activeCall.status === 'ringing' ? 'Ringing...' : formatDuration(callDuration)}
+              </p>
+            </div>
+
             {/* Call Controls */}
-            <div className="relative z-10 flex items-center gap-6 mb-12">
+            <div className={`relative z-10 flex items-center justify-center gap-6 pb-12 w-full ${activeCall.type === 'video' ? 'bg-gradient-to-t from-black/80 to-transparent pt-12 absolute bottom-0 left-0' : ''}`}>
               <button 
                 onClick={toggleMute}
-                className={`p-5 rounded-full transition-all border ${isMuted ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/50 text-white border-slate-700 hover:bg-slate-700'}`}
+                className={`p-4 rounded-full transition-all border ${isMuted ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md'}`}
               >
-                {isMuted ? <Mic size={28} /> : <Mic size={28} />}
+                {isMuted ? <MicOff size={26} /> : <Mic size={26} />}
               </button>
               
               {activeCall.type === 'video' && (
-                <button 
-                  onClick={toggleCamera}
-                  className={`p-5 rounded-full transition-all border ${isCameraOff ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/50 text-white border-slate-700 hover:bg-slate-700'}`}
-                >
-                  <Video size={28} />
-                </button>
+                <>
+                  <button 
+                    onClick={toggleCamera}
+                    className={`p-4 rounded-full transition-all border ${isCameraOff ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md'}`}
+                  >
+                    {isCameraOff ? <VideoOff size={26} /> : <Video size={26} />}
+                  </button>
+                  <button 
+                    onClick={switchCamera}
+                    className="p-4 rounded-full transition-all border bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md"
+                  >
+                    <SwitchCamera size={26} />
+                  </button>
+                </>
               )}
 
               <button 
                 onClick={handleEndCall}
-                className="p-6 bg-red-500 text-white rounded-full hover:bg-red-600 transition-all shadow-xl shadow-red-500/30 hover:scale-110 active:scale-95"
+                className="p-5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-all shadow-xl shadow-red-500/30 hover:scale-110 active:scale-95 ml-2"
               >
-                <PhoneOff size={32} />
+                <PhoneOff size={30} />
               </button>
             </div>
           </motion.div>
