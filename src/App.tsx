@@ -4856,72 +4856,72 @@ function MainApp() {
                   )}
                 </div>
               )}
-              <h2 className="text-3xl font-bold text-white mb-2 drop-shadow-md">
+              <h2 className="text-2xl font-bold text-white mb-1 drop-shadow-md">
                 {activeCall.callerId === user?.uid ? activeCall.receiverName : activeCall.callerName}
               </h2>
-              <p className="text-indigo-300 font-medium tracking-wide uppercase text-sm drop-shadow-md">
+              <p className="text-indigo-200 font-mono text-lg drop-shadow-md">
                 {activeCall.status === 'ringing' ? 'Ringing...' : (isConnecting ? 'Connecting...' : formatDuration(callDuration))}
               </p>
             </div>
 
             {/* Call Controls */}
-            <div className={`relative z-10 flex items-center justify-center gap-5 pb-12 w-full ${activeCall.type === 'video' ? 'bg-gradient-to-t from-black/80 to-transparent pt-12 absolute bottom-0 left-0' : ''}`}>
-              <div className="flex flex-col items-center gap-2">
+            <div className={`relative z-10 flex items-center justify-center gap-4 pb-8 w-full ${activeCall.type === 'video' ? 'bg-gradient-to-t from-black/80 to-transparent pt-8 absolute bottom-0 left-0' : ''}`}>
+              <div className="flex flex-col items-center gap-1">
                 <button 
                   onClick={toggleMute}
                   title={isMuted ? "Unmute" : "Mute"}
-                  className={`p-3.5 rounded-full transition-all border shadow-lg ${isMuted ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md'}`}
+                  className={`p-3 rounded-full transition-all border shadow-md ${isMuted ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md'}`}
                 >
-                  {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
+                  {isMuted ? <MicOff size={18} /> : <Mic size={18} />}
                 </button>
-                <span className="text-[10px] text-white/60 font-medium uppercase tracking-wider">{isMuted ? 'Muted' : 'Mute'}</span>
+                <span className="text-[9px] text-white/70 font-medium uppercase tracking-wider">{isMuted ? 'Muted' : 'Mute'}</span>
               </div>
 
-              <div className="flex flex-col items-center gap-2">
+              <div className="flex flex-col items-center gap-1">
                 <button 
                   onClick={toggleLoudspeaker}
                   title={isLoudspeaker ? "Speaker Off" : "Speaker On"}
-                  className={`p-3.5 rounded-full transition-all border shadow-lg ${isLoudspeaker ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md'}`}
+                  className={`p-3 rounded-full transition-all border shadow-md ${isLoudspeaker ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md'}`}
                 >
-                  {isLoudspeaker ? <Volume2 size={20} /> : <VolumeX size={20} />}
+                  {isLoudspeaker ? <Volume2 size={18} /> : <VolumeX size={18} />}
                 </button>
-                <span className="text-[10px] text-white/60 font-medium uppercase tracking-wider">Speaker</span>
+                <span className="text-[9px] text-white/70 font-medium uppercase tracking-wider">Speaker</span>
               </div>
               
               {activeCall.type === 'video' && (
                 <>
-                  <div className="flex flex-col items-center gap-2">
+                  <div className="flex flex-col items-center gap-1">
                     <button 
                       onClick={toggleCamera}
                       title={isCameraOff ? "Camera On" : "Camera Off"}
-                      className={`p-3.5 rounded-full transition-all border shadow-lg ${isCameraOff ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md'}`}
+                      className={`p-3 rounded-full transition-all border shadow-md ${isCameraOff ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md'}`}
                     >
-                      {isCameraOff ? <VideoOff size={20} /> : <Video size={20} />}
+                      {isCameraOff ? <VideoOff size={18} /> : <Video size={18} />}
                     </button>
-                    <span className="text-[10px] text-white/60 font-medium uppercase tracking-wider">Video</span>
+                    <span className="text-[9px] text-white/70 font-medium uppercase tracking-wider">Video</span>
                   </div>
-                  <div className="flex flex-col items-center gap-2">
+                  <div className="flex flex-col items-center gap-1">
                     <button 
                       onClick={switchCamera}
                       title="Switch Camera"
-                      className="p-3.5 rounded-full transition-all border shadow-lg bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md"
+                      className="p-3 rounded-full transition-all border shadow-md bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md"
                     >
-                      <SwitchCamera size={20} />
+                      <SwitchCamera size={18} />
                     </button>
-                    <span className="text-[10px] text-white/60 font-medium uppercase tracking-wider">Switch</span>
+                    <span className="text-[9px] text-white/70 font-medium uppercase tracking-wider">Switch</span>
                   </div>
                 </>
               )}
 
-              <div className="flex flex-col items-center gap-2">
+              <div className="flex flex-col items-center gap-1">
                 <button 
                   onClick={handleEndCall}
                   title="End Call"
-                  className="p-4.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-all shadow-xl shadow-red-500/40 hover:scale-110 active:scale-95 border-2 border-red-400/20"
+                  className="p-4 bg-red-500 text-white rounded-full hover:bg-red-600 transition-all shadow-lg hover:scale-105 active:scale-95 border-2 border-red-400/20"
                 >
-                  <PhoneOff size={24} />
+                  <PhoneOff size={22} />
                 </button>
-                <span className="text-[10px] text-red-400 font-bold uppercase tracking-wider">End</span>
+                <span className="text-[9px] text-red-400 font-bold uppercase tracking-wider">End</span>
               </div>
             </div>
           </motion.div>
