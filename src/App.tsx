@@ -294,6 +294,7 @@ function MainApp() {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [isLoudspeaker, setIsLoudspeaker] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [callLogs, setCallLogs] = useState<any[]>([]);
   const peerConnection = useRef<RTCPeerConnection | null>(null);
@@ -1463,9 +1464,16 @@ function MainApp() {
   }, [user, selectedChatUser]);
 
   const handleSignIn = async () => {
+    if (isSigningIn) return;
+    setIsSigningIn(true);
     try {
       await signInWithGoogle();
     } catch (error: any) {
+      if (error.code === 'auth/cancelled-popup-request') {
+        console.log("Sign-in popup was cancelled by user or another request.");
+        return;
+      }
+      
       console.error("Sign in error:", error);
       const isIframe = window.self !== window.top;
       let message = "Sign in failed: " + (error.message || "Unknown error");
@@ -1477,6 +1485,8 @@ function MainApp() {
       }
       
       alert(message);
+    } finally {
+      setIsSigningIn(false);
     }
   };
 
@@ -2188,10 +2198,11 @@ function MainApp() {
               <div className="flex flex-col items-end gap-1">
                 <button 
                   onClick={handleSignIn} 
-                  className="ml-2 flex items-center gap-2 px-4 py-1.5 bg-indigo-600 text-white hover:bg-indigo-700 rounded-full text-sm font-medium transition-colors shadow-lg shadow-indigo-500/20"
+                  disabled={isSigningIn}
+                  className="ml-2 flex items-center gap-2 px-4 py-1.5 bg-indigo-600 text-white hover:bg-indigo-700 rounded-full text-sm font-medium transition-colors shadow-lg shadow-indigo-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <LogIn size={16} />
-                  Sign In
+                  {isSigningIn ? <Loader2 className="animate-spin" size={16} /> : <LogIn size={16} />}
+                  {isSigningIn ? 'Signing In...' : 'Sign In'}
                 </button>
               </div>
             )}
