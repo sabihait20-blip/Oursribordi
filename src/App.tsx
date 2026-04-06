@@ -481,46 +481,64 @@ function MainApp() {
 
     setIsUploadingFile(true);
     try {
+      // Check if blocked
+      const recipientDoc = await getDoc(doc(db, 'users_public', selectedChatUser.uid));
+      const recipientData = recipientDoc.data();
+      if (recipientData?.blockedUsers?.includes(user.uid)) {
+        alert("You cannot message this user.");
+        return;
+      }
+      if (userProfile?.blockedUsers?.includes(selectedChatUser.uid)) {
+        alert("Unblock this user to send a message.");
+        return;
+      }
+
       // For demo purposes, we'll use base64 if it's small, or a mock upload
       // In a real app, upload to Firebase Storage
       const reader = new FileReader();
       reader.readAsDataURL(blob);
       reader.onloadend = async () => {
-        const base64data = reader.result as string;
-        
-        const chatId = [user.uid, selectedChatUser.uid].sort().join('_');
-        const chatDoc = await getDoc(doc(db, 'chats', chatId));
-        const isNewChat = !chatDoc.exists();
-        
-        const messageData = {
-          text: '🎤 Voice Message',
-          senderId: user.uid,
-          createdAt: serverTimestamp(),
-          status: 'sent',
-          type: 'voice',
-          fileUrl: base64data, // Using base64 for demo
-          duration: recordingDuration
-        };
+        try {
+          const base64data = reader.result as string;
+          
+          const chatId = [user.uid, selectedChatUser.uid].sort().join('_');
+          const chatDoc = await getDoc(doc(db, 'chats', chatId));
+          const isNewChat = !chatDoc.exists();
+          
+          const messageData = {
+            text: '🎤 Voice Message',
+            senderId: user.uid,
+            createdAt: serverTimestamp(),
+            status: 'sent',
+            type: 'voice',
+            fileUrl: base64data, // Using base64 for demo
+            duration: recordingDuration
+          };
 
-        await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
-        
-        const chatData: any = {
-          lastMessage: '🎤 Voice Message',
-          lastSenderId: user.uid,
-          lastMessageTime: serverTimestamp(),
-          participants: [user.uid, selectedChatUser.uid],
-          isRead: false
-        };
+          await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
+          
+          const chatData: any = {
+            lastMessage: '🎤 Voice Message',
+            lastSenderId: user.uid,
+            lastMessageTime: serverTimestamp(),
+            participants: [user.uid, selectedChatUser.uid],
+            isRead: false
+          };
 
-        if (isNewChat) {
-          chatData.status = 'pending';
-          chatData.initiatedBy = user.uid;
+          if (isNewChat) {
+            chatData.status = 'pending';
+            chatData.initiatedBy = user.uid;
+          }
+
+          await setDoc(doc(db, 'chats', chatId), chatData, { merge: true });
+        } catch (innerErr) {
+          console.error("Error in voice message upload callback:", innerErr);
+          alert("Failed to send voice message.");
         }
-
-        await setDoc(doc(db, 'chats', chatId), chatData, { merge: true });
       };
     } catch (err) {
       console.error("Error sending voice message:", err);
+      alert("Failed to send voice message.");
     } finally {
       setIsUploadingFile(false);
     }
@@ -532,6 +550,18 @@ function MainApp() {
 
     setIsUploadingFile(true);
     try {
+      // Check if blocked
+      const recipientDoc = await getDoc(doc(db, 'users_public', selectedChatUser.uid));
+      const recipientData = recipientDoc.data();
+      if (recipientData?.blockedUsers?.includes(user.uid)) {
+        alert("You cannot message this user.");
+        return;
+      }
+      if (userProfile?.blockedUsers?.includes(selectedChatUser.uid)) {
+        alert("Unblock this user to send a message.");
+        return;
+      }
+
       // Mock file upload - in real app use Firebase Storage
       // For demo, we'll use base64 for small files
       if (file.size > 1024 * 1024) {
@@ -542,41 +572,47 @@ function MainApp() {
       const reader = new FileReader();
       reader.readAsDataURL(file);
       reader.onloadend = async () => {
-        const base64data = reader.result as string;
-        const chatId = [user.uid, selectedChatUser.uid].sort().join('_');
-        const chatDoc = await getDoc(doc(db, 'chats', chatId));
-        const isNewChat = !chatDoc.exists();
-        
-        const messageData = {
-          text: `📁 ${file.name}`,
-          senderId: user.uid,
-          createdAt: serverTimestamp(),
-          status: 'sent',
-          type: 'file',
-          fileUrl: base64data,
-          fileName: file.name,
-          fileSize: file.size
-        };
+        try {
+          const base64data = reader.result as string;
+          const chatId = [user.uid, selectedChatUser.uid].sort().join('_');
+          const chatDoc = await getDoc(doc(db, 'chats', chatId));
+          const isNewChat = !chatDoc.exists();
+          
+          const messageData = {
+            text: `📁 ${file.name}`,
+            senderId: user.uid,
+            createdAt: serverTimestamp(),
+            status: 'sent',
+            type: 'file',
+            fileUrl: base64data,
+            fileName: file.name,
+            fileSize: file.size
+          };
 
-        await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
-        
-        const chatData: any = {
-          lastMessage: `📁 ${file.name}`,
-          lastSenderId: user.uid,
-          lastMessageTime: serverTimestamp(),
-          participants: [user.uid, selectedChatUser.uid],
-          isRead: false
-        };
+          await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
+          
+          const chatData: any = {
+            lastMessage: `📁 ${file.name}`,
+            lastSenderId: user.uid,
+            lastMessageTime: serverTimestamp(),
+            participants: [user.uid, selectedChatUser.uid],
+            isRead: false
+          };
 
-        if (isNewChat) {
-          chatData.status = 'pending';
-          chatData.initiatedBy = user.uid;
+          if (isNewChat) {
+            chatData.status = 'pending';
+            chatData.initiatedBy = user.uid;
+          }
+
+          await setDoc(doc(db, 'chats', chatId), chatData, { merge: true });
+        } catch (innerErr) {
+          console.error("Error in file upload callback:", innerErr);
+          alert("Failed to upload file.");
         }
-
-        await setDoc(doc(db, 'chats', chatId), chatData, { merge: true });
       };
     } catch (err) {
       console.error("Error uploading file:", err);
+      alert("Failed to upload file.");
     } finally {
       setIsUploadingFile(false);
     }
@@ -698,7 +734,7 @@ function MainApp() {
     if (!callTarget || !user) return;
 
     // Check if blocked
-    const recipientDoc = await getDoc(doc(db, 'users', callTarget.uid));
+    const recipientDoc = await getDoc(doc(db, 'users_public', callTarget.uid));
     const recipientData = recipientDoc.data();
     if (recipientData?.blockedUsers?.includes(user.uid)) {
       alert("You cannot call this user.");
@@ -1676,10 +1712,35 @@ function MainApp() {
   };
 
   const handleAcceptChat = async (chatId: string) => {
+    if (!user || !selectedChatUser) return;
     try {
       await updateDoc(doc(db, 'chats', chatId), {
         status: 'accepted'
       });
+
+      // Make them friends (follow each other)
+      const otherUserId = selectedChatUser.uid;
+      
+      // Check if already following
+      const q1 = query(collection(db, 'followers'), where('followerId', '==', user.uid), where('followingId', '==', otherUserId));
+      const s1 = await getDocs(q1);
+      if (s1.empty) {
+        await addDoc(collection(db, 'followers'), {
+          followerId: user.uid,
+          followingId: otherUserId,
+          createdAt: serverTimestamp()
+        });
+      }
+
+      const q2 = query(collection(db, 'followers'), where('followerId', '==', otherUserId), where('followingId', '==', user.uid));
+      const s2 = await getDocs(q2);
+      if (s2.empty) {
+        await addDoc(collection(db, 'followers'), {
+          followerId: otherUserId,
+          followingId: user.uid,
+          createdAt: serverTimestamp()
+        });
+      }
     } catch (err) {
       console.error("Error accepting chat:", err);
     }
@@ -1704,69 +1765,72 @@ function MainApp() {
     e.preventDefault();
     if (!user || !selectedChatUser || !newMessage.trim()) return;
 
-    // Check if blocked
-    const recipientDoc = await getDoc(doc(db, 'users', selectedChatUser.uid));
-    const recipientData = recipientDoc.data();
-    if (recipientData?.blockedUsers?.includes(user.uid)) {
-      alert("You cannot message this user.");
-      return;
-    }
-    if (userProfile?.blockedUsers?.includes(selectedChatUser.uid)) {
-      alert("Unblock this user to send a message.");
-      return;
-    }
-    
-    const chatId = [user.uid, selectedChatUser.uid].sort().join('_');
-    const chatDoc = await getDoc(doc(db, 'chats', chatId));
-    const isNewChat = !chatDoc.exists();
-    
-    const messageText = newMessage.trim();
-    setNewMessage('');
-
-    await addDoc(collection(db, 'chats', chatId, 'messages'), {
-      text: messageText,
-      senderId: user.uid,
-      createdAt: serverTimestamp(),
-      status: 'sent',
-      type: 'text'
-    });
-
-    const chatData: any = {
-      participants: [user.uid, selectedChatUser.uid],
-      lastMessage: messageText,
-      lastMessageTime: serverTimestamp(),
-      lastSenderId: user.uid,
-      isRead: false
-    };
-
-    if (isNewChat) {
-      chatData.status = 'pending';
-      chatData.initiatedBy = user.uid;
-    }
-
-    await setDoc(doc(db, 'chats', chatId), chatData, { merge: true });
-
-    // Send Push Notification
     try {
-      const recipientDoc = await getDoc(doc(db, 'users', selectedChatUser.uid));
+      // Check if blocked
+      const recipientDoc = await getDoc(doc(db, 'users_public', selectedChatUser.uid));
       const recipientData = recipientDoc.data();
-      if (recipientData?.fcmToken) {
-        await fetch('/api/send-notification', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token: recipientData.fcmToken,
-            title: `New message from ${user.displayName || 'User'}`,
-            body: messageText,
-            data: {
-              chatId: chatId,
-              senderId: user.uid
-            }
-          })
-        });
+      if (recipientData?.blockedUsers?.includes(user.uid)) {
+        alert("You cannot message this user.");
+        return;
       }
-    } catch (error) {
-      console.error('Error sending push notification:', error);
+      if (userProfile?.blockedUsers?.includes(selectedChatUser.uid)) {
+        alert("Unblock this user to send a message.");
+        return;
+      }
+      
+      const chatId = [user.uid, selectedChatUser.uid].sort().join('_');
+      const chatDoc = await getDoc(doc(db, 'chats', chatId));
+      const isNewChat = !chatDoc.exists();
+      
+      const messageText = newMessage.trim();
+      setNewMessage('');
+
+      await addDoc(collection(db, 'chats', chatId, 'messages'), {
+        text: messageText,
+        senderId: user.uid,
+        createdAt: serverTimestamp(),
+        status: 'sent',
+        type: 'text'
+      });
+
+      const chatData: any = {
+        participants: [user.uid, selectedChatUser.uid],
+        lastMessage: messageText,
+        lastMessageTime: serverTimestamp(),
+        lastSenderId: user.uid,
+        isRead: false
+      };
+
+      if (isNewChat) {
+        chatData.status = 'pending';
+        chatData.initiatedBy = user.uid;
+      }
+
+      await setDoc(doc(db, 'chats', chatId), chatData, { merge: true });
+
+      // Send Push Notification
+      try {
+        if (recipientData?.fcmToken) {
+          await fetch('/api/send-notification', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              token: recipientData.fcmToken,
+              title: `New message from ${user.displayName || 'User'}`,
+              body: messageText,
+              data: {
+                chatId: chatId,
+                senderId: user.uid
+              }
+            })
+          });
+        }
+      } catch (error) {
+        console.error('Error sending push notification:', error);
+      }
+    } catch (err) {
+      console.error("Error sending message:", err);
+      alert("Failed to send message. Please try again.");
     }
   };
 
@@ -1866,12 +1930,15 @@ function MainApp() {
   const handleBlockUser = async (targetUid: string) => {
     if (!user) return;
     const userRef = doc(db, 'users', user.uid);
+    const publicUserRef = doc(db, 'users_public', user.uid);
     const isBlocked = userProfile?.blockedUsers?.includes(targetUid);
     
     try {
-      await updateDoc(userRef, {
+      const updateData = {
         blockedUsers: isBlocked ? arrayRemove(targetUid) : arrayUnion(targetUid)
-      });
+      };
+      await updateDoc(userRef, updateData);
+      await updateDoc(publicUserRef, updateData);
     } catch (error) {
       console.error("Error blocking user:", error);
     }
@@ -1997,7 +2064,9 @@ function MainApp() {
         name: displayName,
         photoURL: newPhotoURL,
         username: newUsername,
-        isPrivate: newIsPrivate
+        isPrivate: newIsPrivate,
+        fcmToken: userProfile?.fcmToken || null,
+        blockedUsers: userProfile?.blockedUsers || []
       }, { merge: true });
       
       setUser({ ...user, displayName: displayName, photoURL: newPhotoURL } as User);
