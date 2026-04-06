@@ -307,7 +307,7 @@ function MainApp() {
   useEffect(() => {
     ringtoneAudio.current = new Audio('https://assets.mixkit.co/active_storage/sfx/1359/1359-preview.mp3');
     ringtoneAudio.current.loop = true;
-    callingAudio.current = new Audio('https://www.soundjay.com/phone/phone-calling-1.mp3');
+    callingAudio.current = new Audio('https://assets.mixkit.co/active_storage/sfx/1358/1358-preview.mp3');
     callingAudio.current.loop = true;
 
     return () => {
@@ -536,36 +536,21 @@ function MainApp() {
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [callDuration, setCallDuration] = useState(0);
   const durationInterval = useRef<any>(null);
-  const ringtoneRef = useRef<HTMLAudioElement | null>(null);
-  const dialingRef = useRef<HTMLAudioElement | null>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement>(null);
 
-  // Audio URLs (Using public assets or base64)
-  const RINGTONE_URL = 'https://assets.mixkit.co/active_storage/sfx/1359/1359-preview.mp3';
-  const DIALING_URL = 'https://assets.mixkit.co/active_storage/sfx/1358/1358-preview.mp3';
+  // Reliable stream attachment
+  useEffect(() => {
+    if (remoteVideoRef.current && remoteStream && activeCall?.type === 'video') {
+      remoteVideoRef.current.srcObject = remoteStream;
+    }
+  }, [remoteStream, activeCall]);
 
   useEffect(() => {
-    if (incomingCall) {
-      ringtoneRef.current = new Audio(RINGTONE_URL);
-      ringtoneRef.current.loop = true;
-      ringtoneRef.current.play().catch(e => console.log("Audio play blocked", e));
-    } else {
-      ringtoneRef.current?.pause();
-      ringtoneRef.current = null;
+    if (remoteAudioRef.current && remoteStream && activeCall?.type === 'voice') {
+      remoteAudioRef.current.srcObject = remoteStream;
     }
-    return () => ringtoneRef.current?.pause();
-  }, [incomingCall]);
-
-  useEffect(() => {
-    if (activeCall && activeCall.status === 'ringing' && activeCall.callerId === user?.uid) {
-      dialingRef.current = new Audio(DIALING_URL);
-      dialingRef.current.loop = true;
-      dialingRef.current.play().catch(e => console.log("Audio play blocked", e));
-    } else {
-      dialingRef.current?.pause();
-      dialingRef.current = null;
-    }
-    return () => dialingRef.current?.pause();
-  }, [activeCall, user]);
+  }, [remoteStream, activeCall]);
 
   useEffect(() => {
     if (activeCall && activeCall.status === 'accepted') {
@@ -643,8 +628,9 @@ function MainApp() {
   };
 
   // Calling Logic
-  const initiateCall = async (type: 'voice' | 'video') => {
-    if (!selectedChatUser || !user) return;
+  const initiateCall = async (type: 'voice' | 'video', targetUser?: UserPublicProfile) => {
+    const callTarget = targetUser || selectedChatUser;
+    if (!callTarget || !user) return;
 
     setIsConnecting(true);
     try {
@@ -659,9 +645,9 @@ function MainApp() {
         callerId: user.uid,
         callerName: user.displayName || 'User',
         callerPhoto: user.photoURL || '',
-        receiverId: selectedChatUser.uid,
-        receiverName: selectedChatUser.name,
-        receiverPhoto: selectedChatUser.photoURL || '',
+        receiverId: callTarget.uid,
+        receiverName: callTarget.name,
+        receiverPhoto: callTarget.photoURL || '',
         status: 'ringing',
         type,
         createdAt: serverTimestamp(),
@@ -669,7 +655,7 @@ function MainApp() {
 
       const docRef = await addDoc(callRef, newCall);
       setActiveCall({ id: docRef.id, ...newCall } as CallSession);
-      setIsConnecting(false);
+      // isConnecting remains true until WebRTC connects
 
       // WebRTC Setup
       const pc = new RTCPeerConnection({
@@ -762,7 +748,7 @@ function MainApp() {
       setLocalStream(stream);
       setActiveCall(incomingCall);
       setIncomingCall(null);
-      setIsConnecting(false);
+      // isConnecting remains true until WebRTC connects
 
       const pc = new RTCPeerConnection({
         iceServers: [
@@ -823,6 +809,8 @@ function MainApp() {
         receiverId: incomingCall.receiverId,
         callerName: incomingCall.callerName || 'Unknown',
         receiverName: incomingCall.receiverName || 'Unknown',
+        callerPhoto: incomingCall.callerPhoto || '',
+        receiverPhoto: incomingCall.receiverPhoto || '',
         type: incomingCall.type,
         status: 'missed',
         createdAt: serverTimestamp()
@@ -849,6 +837,8 @@ function MainApp() {
           receiverId: data.receiverId,
           callerName: data.callerName || 'Unknown',
           receiverName: data.receiverName || 'Unknown',
+          callerPhoto: data.callerPhoto || '',
+          receiverPhoto: data.receiverPhoto || '',
           type: data.type,
           status: data.callerId === user?.uid ? 'dialed' : 'received',
           duration: callDuration,
@@ -934,7 +924,7 @@ function MainApp() {
   const [replyingTo, setReplyingTo] = useState<Comment | null>(null);
 
   // New state for tabs and wallet
-  const [activeTab, setActiveTab] = useState<'home' | 'wallet' | 'profile' | 'messages' | 'admin'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'wallet' | 'profile' | 'messages' | 'admin' | 'calls'>('home');
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [withdrawMethod, setWithdrawMethod] = useState('bkash');
@@ -2825,8 +2815,9 @@ function MainApp() {
                             const targetUid = log.callerId === user?.uid ? log.receiverId : log.callerId;
                             const targetName = log.callerId === user?.uid ? log.receiverName : log.callerName;
                             const targetPhoto = log.callerId === user?.uid ? log.receiverPhoto : log.callerPhoto;
-                            setSelectedChatUser({ uid: targetUid, name: targetName, photoURL: targetPhoto });
-                            initiateCall(log.type);
+                            const targetUser = { uid: targetUid, name: targetName, photoURL: targetPhoto };
+                            setSelectedChatUser(targetUser);
+                            initiateCall(log.type, targetUser);
                           }}
                           className="p-3 bg-[#38bdf8]/10 text-[#38bdf8] hover:bg-[#38bdf8] hover:text-white rounded-xl transition-all"
                         >
@@ -4084,7 +4075,7 @@ function MainApp() {
                   <video 
                     autoPlay 
                     playsInline 
-                    ref={el => { if (el) el.srcObject = remoteStream; }}
+                    ref={remoteVideoRef}
                     className="w-full h-full object-cover"
                   />
                 ) : (
@@ -4121,7 +4112,7 @@ function MainApp() {
               <audio 
                 autoPlay 
                 playsInline 
-                ref={el => { if (el) el.srcObject = remoteStream; }}
+                ref={remoteAudioRef}
               />
             )}
 
@@ -4157,7 +4148,7 @@ function MainApp() {
                 {activeCall.callerId === user?.uid ? activeCall.receiverName : activeCall.callerName}
               </h2>
               <p className="text-indigo-300 font-medium tracking-wide uppercase text-sm drop-shadow-md">
-                {isConnecting ? 'Connecting...' : (activeCall.status === 'ringing' ? 'Ringing...' : formatDuration(callDuration))}
+                {activeCall.status === 'accepted' && isConnecting ? 'Connecting...' : (activeCall.status === 'ringing' ? 'Ringing...' : formatDuration(callDuration))}
               </p>
             </div>
 
