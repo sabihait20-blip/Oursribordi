@@ -411,6 +411,9 @@ function MainApp() {
       const data = snapshot.data() as any;
       if (!data) return;
 
+      // Sync active call state
+      setActiveCall(prev => prev ? { ...prev, ...data } : null);
+
       if (data.status === 'ended' || data.status === 'declined' || data.status === 'busy' || data.status === 'no-answer') {
         handleEndCall();
       }
@@ -1828,9 +1831,9 @@ function MainApp() {
       } catch (error) {
         console.error('Error sending push notification:', error);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error sending message:", err);
-      alert("Failed to send message. Please try again.");
+      alert(`Failed to send message: ${err.message || 'Unknown error'}`);
     }
   };
 

@@ -351,7 +351,7 @@ service cloud.firestore {
                       chatId.matches('.*' + request.auth.uid + '.*') &&
                       isValidMessage(request.resource.data) &&
                       request.resource.data.senderId == request.auth.uid &&
-                      request.resource.data.createdAt == request.time;
+                      request.resource.data.createdAt <= request.time;
         allow update: if isAuthenticated() && 
                       chatId.matches('.*' + request.auth.uid + '.*') &&
                       (
