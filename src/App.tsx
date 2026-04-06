@@ -435,6 +435,9 @@ function MainApp() {
           }
         });
       }
+    }, (error) => {
+      console.error("Call snapshot error:", error);
+      handleFirestoreError(error, OperationType.GET, `calls/${activeCall.id}`);
     });
 
     return () => unsubscribe();
@@ -726,8 +729,13 @@ function MainApp() {
   };
 
   const formatDuration = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
+    const hrs = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
+    
+    if (hrs > 0) {
+      return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
@@ -999,44 +1007,48 @@ function MainApp() {
   };
 
   const handleEndCall = async () => {
-    if (activeCall) {
-      const callRef = doc(db, 'calls', activeCall.id);
-      const snap = await getDoc(callRef);
-      const data = snap.data() as CallSession;
-
-      if (data?.status !== 'ended') {
-        await updateDoc(callRef, { status: 'ended' });
-      }
-
-      // Log call
-      if (data) {
-        await addDoc(collection(db, 'call_logs'), {
-          callerId: data.callerId,
-          receiverId: data.receiverId,
-          callerName: data.callerName || 'Unknown',
-          receiverName: data.receiverName || 'Unknown',
-          callerPhoto: data.callerPhoto || '',
-          receiverPhoto: data.receiverPhoto || '',
-          type: data.type,
-          status: data.callerId === user?.uid ? 'dialed' : 'received',
-          duration: callDuration,
-          createdAt: serverTimestamp()
-        });
-      }
-    }
-
-    if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
-    }
+    // Immediate UI update for responsiveness
+    const currentActiveCall = activeCall;
+    const currentLocalStream = localStream;
+    
+    setActiveCall(null);
     setLocalStream(null);
     setRemoteStream(null);
-    setActiveCall(null);
     setIsMuted(false);
     setIsCameraOff(false);
     setCallDuration(0);
+    
     if (peerConnection.current) {
       peerConnection.current.close();
       peerConnection.current = null;
+    }
+
+    if (currentLocalStream) {
+      currentLocalStream.getTracks().forEach(track => track.stop());
+    }
+
+    if (currentActiveCall) {
+      try {
+        const callRef = doc(db, 'calls', currentActiveCall.id);
+        // We don't need to await this for the UI to close
+        updateDoc(callRef, { status: 'ended' });
+
+        // Log call
+        addDoc(collection(db, 'call_logs'), {
+          callerId: currentActiveCall.callerId,
+          receiverId: currentActiveCall.receiverId,
+          callerName: currentActiveCall.callerName || 'Unknown',
+          receiverName: currentActiveCall.receiverName || 'Unknown',
+          callerPhoto: currentActiveCall.callerPhoto || '',
+          receiverPhoto: currentActiveCall.receiverPhoto || '',
+          type: currentActiveCall.type,
+          status: currentActiveCall.callerId === user?.uid ? 'dialed' : 'received',
+          duration: callDuration,
+          createdAt: serverTimestamp()
+        });
+      } catch (err) {
+        console.error("Error ending call:", err);
+      }
     }
   };
   const [isTestingNotification, setIsTestingNotification] = useState(false);
@@ -1441,6 +1453,7 @@ function MainApp() {
     const publicUserRef = doc(db, 'users_public', user.uid);
 
     const setOnlineStatus = async (status: boolean) => {
+      if (!user || !userProfile) return;
       try {
         await setDoc(userRef, { 
           isOnline: status, 
@@ -1452,12 +1465,12 @@ function MainApp() {
         }, { merge: true });
       } catch (error) {
         console.error("Error updating online status:", error);
-        // If it's a permission error, it might be due to rules. 
-        // The rules have been updated, but we keep this for debugging.
       }
     };
 
-    setOnlineStatus(true);
+    if (userProfile) {
+      setOnlineStatus(true);
+    }
 
     const handleVisibilityChange = () => {
       setOnlineStatus(document.visibilityState === 'visible');
@@ -1470,7 +1483,7 @@ function MainApp() {
       setOnlineStatus(false);
       window.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [user]);
+  }, [user, userProfile]);
 
   useEffect(() => {
     if (!isAuthReady) return;
@@ -1483,6 +1496,9 @@ function MainApp() {
         .filter(u => !u.isPrivate)
         .slice(0, 10);
       setLeaderboard(usersData);
+    }, (error) => {
+      console.error("Leaderboard listener error:", error);
+      handleFirestoreError(error, OperationType.LIST, 'users_public');
     });
 
     // Fetch all withdrawals for Admin
@@ -1503,10 +1519,16 @@ function MainApp() {
           pendingWithdrawals: pending,
           totalWithdrawals: wData.length
         }));
+      }, (error) => {
+        console.error("Admin withdrawals listener error:", error);
+        handleFirestoreError(error, OperationType.LIST, 'withdrawals');
       });
 
       const unsubAllBanners = onSnapshot(query(collection(db, 'ad_banners'), orderBy('createdAt', 'desc')), (snapshot) => {
         setAllAdBanners(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as AdBanner)));
+      }, (error) => {
+        console.error("Admin banners listener error:", error);
+        handleFirestoreError(error, OperationType.LIST, 'ad_banners');
       });
 
       const unsubAdminUsers = onSnapshot(query(collection(db, 'users'), orderBy('balance', 'desc')), (snapshot) => {
@@ -1523,6 +1545,9 @@ function MainApp() {
           totalUsers: users.length,
           totalBalance: totalBal
         }));
+      }, (error) => {
+        console.error("Admin users listener error:", error);
+        handleFirestoreError(error, OperationType.LIST, 'users');
       });
 
       const unsubAdminPosts = onSnapshot(query(collection(db, 'posts'), orderBy('createdAt', 'desc')), (snapshot) => {
@@ -1535,6 +1560,16 @@ function MainApp() {
           ...prev,
           totalPosts: postsData.length
         }));
+      }, (error) => {
+        console.error("Admin posts listener error:", error);
+        handleFirestoreError(error, OperationType.LIST, 'posts');
+      });
+
+      const unsubVerificationRequests = onSnapshot(query(collection(db, 'verification_requests'), orderBy('createdAt', 'desc')), (snapshot) => {
+        setVerificationRequests(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as VerificationRequest)));
+      }, (error) => {
+        console.error("Admin verification requests listener error:", error);
+        handleFirestoreError(error, OperationType.LIST, 'verification_requests');
       });
 
       return () => {
@@ -1542,6 +1577,7 @@ function MainApp() {
         unsubAllBanners?.();
         unsubAdminUsers?.();
         unsubAdminPosts?.();
+        unsubVerificationRequests?.();
       };
     }
 
@@ -1559,20 +1595,25 @@ function MainApp() {
         return story.expiresAt.toDate() > now;
       });
       setStories(activeStories);
+    }, (error) => {
+      console.error("Stories listener error:", error);
+      handleFirestoreError(error, OperationType.LIST, 'stories');
     });
 
     const unsubGlobalNotifications = onSnapshot(query(collection(db, 'global_notifications'), orderBy('createdAt', 'desc')), (snapshot) => {
       setGlobalNotifications(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-
-    const unsubVerificationRequests = onSnapshot(query(collection(db, 'verification_requests'), orderBy('createdAt', 'desc')), (snapshot) => {
-      setVerificationRequests(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as VerificationRequest)));
+    }, (error) => {
+      console.error("Global notifications listener error:", error);
+      handleFirestoreError(error, OperationType.LIST, 'global_notifications');
     });
 
     const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'));
 
     const unsubBanners = onSnapshot(query(collection(db, 'ad_banners'), where('active', '==', true), orderBy('createdAt', 'desc')), (snapshot) => {
       setAdBanners(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as AdBanner)));
+    }, (error) => {
+      console.error("Ad banners listener error:", error);
+      handleFirestoreError(error, OperationType.LIST, 'ad_banners');
     });
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -1605,7 +1646,6 @@ function MainApp() {
       unsubStories();
       unsubBanners();
       unsubGlobalNotifications();
-      unsubVerificationRequests();
     };
   }, [isAuthReady, user, isAdmin, postSearchQuery]);
 
@@ -1647,11 +1687,17 @@ function MainApp() {
         .map(doc => ({ ...doc.data() } as UserPublicProfile))
         .filter(u => u.uid !== user.uid);
       setAllUsers(users);
+    }, (error) => {
+      console.error("Users list listener error:", error);
+      handleFirestoreError(error, OperationType.LIST, 'users_public');
     });
 
     const qChats = query(collection(db, 'chats'), where('participants', 'array-contains', user.uid), orderBy('lastMessageTime', 'desc'));
     const unsubChats = onSnapshot(qChats, (snapshot) => {
       setConversations(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ChatConversation)));
+    }, (error) => {
+      console.error("Chats list listener error:", error);
+      handleFirestoreError(error, OperationType.LIST, 'chats');
     });
 
     return () => {
@@ -1683,6 +1729,9 @@ function MainApp() {
           updateDoc(doc(db, 'chats', chatId), { isRead: true }).catch(console.error);
         }
       }
+    }, (error) => {
+      console.error("Messages listener error:", error);
+      handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`);
     });
     return () => unsubscribe();
   }, [user, selectedChatUser]);
@@ -4811,49 +4860,69 @@ function MainApp() {
                 {activeCall.callerId === user?.uid ? activeCall.receiverName : activeCall.callerName}
               </h2>
               <p className="text-indigo-300 font-medium tracking-wide uppercase text-sm drop-shadow-md">
-                {activeCall.status === 'accepted' && isConnecting ? 'Connecting...' : (activeCall.status === 'ringing' ? 'Ringing...' : formatDuration(callDuration))}
+                {activeCall.status === 'ringing' ? 'Ringing...' : (isConnecting ? 'Connecting...' : formatDuration(callDuration))}
               </p>
             </div>
 
             {/* Call Controls */}
-            <div className={`relative z-10 flex items-center justify-center gap-6 pb-12 w-full ${activeCall.type === 'video' ? 'bg-gradient-to-t from-black/80 to-transparent pt-12 absolute bottom-0 left-0' : ''}`}>
-              <button 
-                onClick={toggleMute}
-                className={`p-4 rounded-full transition-all border ${isMuted ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md'}`}
-              >
-                {isMuted ? <MicOff size={26} /> : <Mic size={26} />}
-              </button>
+            <div className={`relative z-10 flex items-center justify-center gap-5 pb-12 w-full ${activeCall.type === 'video' ? 'bg-gradient-to-t from-black/80 to-transparent pt-12 absolute bottom-0 left-0' : ''}`}>
+              <div className="flex flex-col items-center gap-2">
+                <button 
+                  onClick={toggleMute}
+                  title={isMuted ? "Unmute" : "Mute"}
+                  className={`p-3.5 rounded-full transition-all border shadow-lg ${isMuted ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md'}`}
+                >
+                  {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
+                </button>
+                <span className="text-[10px] text-white/60 font-medium uppercase tracking-wider">{isMuted ? 'Muted' : 'Mute'}</span>
+              </div>
 
-              <button 
-                onClick={toggleLoudspeaker}
-                className={`p-4 rounded-full transition-all border ${isLoudspeaker ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md'}`}
-              >
-                {isLoudspeaker ? <Volume2 size={26} /> : <VolumeX size={26} />}
-              </button>
+              <div className="flex flex-col items-center gap-2">
+                <button 
+                  onClick={toggleLoudspeaker}
+                  title={isLoudspeaker ? "Speaker Off" : "Speaker On"}
+                  className={`p-3.5 rounded-full transition-all border shadow-lg ${isLoudspeaker ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md'}`}
+                >
+                  {isLoudspeaker ? <Volume2 size={20} /> : <VolumeX size={20} />}
+                </button>
+                <span className="text-[10px] text-white/60 font-medium uppercase tracking-wider">Speaker</span>
+              </div>
               
               {activeCall.type === 'video' && (
                 <>
-                  <button 
-                    onClick={toggleCamera}
-                    className={`p-4 rounded-full transition-all border ${isCameraOff ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md'}`}
-                  >
-                    {isCameraOff ? <VideoOff size={26} /> : <Video size={26} />}
-                  </button>
-                  <button 
-                    onClick={switchCamera}
-                    className="p-4 rounded-full transition-all border bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md"
-                  >
-                    <SwitchCamera size={26} />
-                  </button>
+                  <div className="flex flex-col items-center gap-2">
+                    <button 
+                      onClick={toggleCamera}
+                      title={isCameraOff ? "Camera On" : "Camera Off"}
+                      className={`p-3.5 rounded-full transition-all border shadow-lg ${isCameraOff ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md'}`}
+                    >
+                      {isCameraOff ? <VideoOff size={20} /> : <Video size={20} />}
+                    </button>
+                    <span className="text-[10px] text-white/60 font-medium uppercase tracking-wider">Video</span>
+                  </div>
+                  <div className="flex flex-col items-center gap-2">
+                    <button 
+                      onClick={switchCamera}
+                      title="Switch Camera"
+                      className="p-3.5 rounded-full transition-all border shadow-lg bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md"
+                    >
+                      <SwitchCamera size={20} />
+                    </button>
+                    <span className="text-[10px] text-white/60 font-medium uppercase tracking-wider">Switch</span>
+                  </div>
                 </>
               )}
 
-              <button 
-                onClick={handleEndCall}
-                className="p-5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-all shadow-xl shadow-red-500/30 hover:scale-110 active:scale-95 ml-2"
-              >
-                <PhoneOff size={30} />
-              </button>
+              <div className="flex flex-col items-center gap-2">
+                <button 
+                  onClick={handleEndCall}
+                  title="End Call"
+                  className="p-4.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-all shadow-xl shadow-red-500/40 hover:scale-110 active:scale-95 border-2 border-red-400/20"
+                >
+                  <PhoneOff size={24} />
+                </button>
+                <span className="text-[10px] text-red-400 font-bold uppercase tracking-wider">End</span>
+              </div>
             </div>
           </motion.div>
         )}
