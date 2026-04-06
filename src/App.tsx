@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import React, { useState, useEffect, useRef, ErrorInfo, ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, useParams, useNavigate, Link } from 'react-router-dom';
-import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search, Edit2, UserPlus, UserMinus, Bookmark, Shield, Trophy, Award, Bell, Camera, Eye, AtSign, ShoppingBag, Store, ShoppingCart, Users, BarChart3, Megaphone, FileText, Mic, MicOff, Phone, Paperclip, Video, VideoOff, SwitchCamera, PhoneOff, PhoneIncoming, PhoneOutgoing } from 'lucide-react';
+import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search, Edit2, UserPlus, UserMinus, Bookmark, Shield, Trophy, Award, Bell, Camera, Eye, AtSign, ShoppingBag, Store, ShoppingCart, Users, BarChart3, Megaphone, FileText, Mic, MicOff, Phone, Paperclip, Video, VideoOff, SwitchCamera, PhoneOff, PhoneIncoming, PhoneOutgoing, Volume2, VolumeX } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, addDoc, onSnapshot, query, serverTimestamp, Timestamp, deleteDoc, doc, where, or, updateDoc, arrayUnion, arrayRemove, orderBy, getDoc, getDocs, setDoc, increment } from 'firebase/firestore';
 import { onAuthStateChanged, User, updateProfile } from 'firebase/auth';
@@ -293,8 +293,62 @@ function MainApp() {
   const [activeCall, setActiveCall] = useState<CallSession | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [isLoudspeaker, setIsLoudspeaker] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [callLogs, setCallLogs] = useState<any[]>([]);
   const peerConnection = useRef<RTCPeerConnection | null>(null);
+  const addedCandidates = useRef<Set<string>>(new Set());
+  const ringtoneAudio = useRef<HTMLAudioElement | null>(null);
+  const callingAudio = useRef<HTMLAudioElement | null>(null);
   const recordingTimer = useRef<any>(null);
+
+  // Initialize Sound Effects
+  useEffect(() => {
+    ringtoneAudio.current = new Audio('https://assets.mixkit.co/active_storage/sfx/1359/1359-preview.mp3');
+    ringtoneAudio.current.loop = true;
+    callingAudio.current = new Audio('https://www.soundjay.com/phone/phone-calling-1.mp3');
+    callingAudio.current.loop = true;
+
+    return () => {
+      ringtoneAudio.current?.pause();
+      callingAudio.current?.pause();
+    };
+  }, []);
+
+  // Handle Ringtone for Incoming Call
+  useEffect(() => {
+    if (incomingCall && !activeCall) {
+      ringtoneAudio.current?.play().catch(e => console.log("Audio play blocked", e));
+    } else {
+      ringtoneAudio.current?.pause();
+      if (ringtoneAudio.current) ringtoneAudio.current.currentTime = 0;
+    }
+  }, [incomingCall, activeCall]);
+
+  // Handle Dial Tone for Outgoing Call
+  useEffect(() => {
+    if (activeCall && activeCall.status === 'ringing' && activeCall.callerId === user?.uid) {
+      callingAudio.current?.play().catch(e => console.log("Audio play blocked", e));
+    } else {
+      callingAudio.current?.pause();
+      if (callingAudio.current) callingAudio.current.currentTime = 0;
+    }
+  }, [activeCall, user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const q = query(
+      collection(db, 'call_logs'),
+      or(where('callerId', '==', user.uid), where('receiverId', '==', user.uid)),
+      orderBy('createdAt', 'desc')
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setCallLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (error) => {
+      console.error("Error fetching call logs:", error);
+    });
+    return () => unsubscribe();
+  }, [user]);
 
   // Call Signaling Listeners
   useEffect(() => {
@@ -317,7 +371,10 @@ function MainApp() {
   }, [user, activeCall]);
 
   useEffect(() => {
-    if (!activeCall || !user) return;
+    if (!activeCall || !user) {
+      addedCandidates.current.clear();
+      return;
+    }
 
     const unsubscribe = onSnapshot(doc(db, 'calls', activeCall.id), (snapshot) => {
       const data = snapshot.data() as any;
@@ -336,7 +393,12 @@ function MainApp() {
       const candidates = data.iceCandidates?.[otherId];
       if (candidates && peerConnection.current?.remoteDescription) {
         candidates.forEach((candidate: any) => {
-          peerConnection.current?.addIceCandidate(new RTCIceCandidate(candidate)).catch(e => console.error("Error adding ICE candidate", e));
+          const candidateStr = JSON.stringify(candidate);
+          if (!addedCandidates.current.has(candidateStr)) {
+            peerConnection.current?.addIceCandidate(new RTCIceCandidate(candidate))
+              .then(() => addedCandidates.current.add(candidateStr))
+              .catch(e => console.error("Error adding ICE candidate", e));
+          }
         });
       }
     });
@@ -534,6 +596,13 @@ function MainApp() {
     }
   };
 
+  const toggleLoudspeaker = () => {
+    setIsLoudspeaker(!isLoudspeaker);
+    // On mobile browsers, we can't easily force earpiece vs speaker via JS, 
+    // but we can toggle the state for UI feedback. 
+    // Most browsers default to speaker for video calls.
+  };
+
   const switchCamera = async () => {
     if (!localStream || activeCall?.type !== 'video') return;
     
@@ -576,6 +645,7 @@ function MainApp() {
   const initiateCall = async (type: 'voice' | 'video') => {
     if (!selectedChatUser || !user) return;
 
+    setIsConnecting(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: true, 
@@ -598,15 +668,32 @@ function MainApp() {
 
       const docRef = await addDoc(callRef, newCall);
       setActiveCall({ id: docRef.id, ...newCall } as CallSession);
+      setIsConnecting(false);
 
       // WebRTC Setup
       const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' }
+        ]
       });
       peerConnection.current = pc;
 
       stream.getTracks().forEach(track => pc.addTrack(track, stream));
-      pc.ontrack = (event) => setRemoteStream(event.streams[0]);
+      
+      pc.ontrack = (event) => {
+        console.log("Remote track received:", event.track.kind);
+        if (event.streams && event.streams[0]) {
+          setRemoteStream(event.streams[0]);
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        console.log("ICE Connection State:", pc.iceConnectionState);
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+          setIsConnecting(false);
+        }
+      };
 
       // ICE Candidates
       pc.onicecandidate = (event) => {
@@ -665,6 +752,7 @@ function MainApp() {
   const handleAcceptCall = async () => {
     if (!incomingCall || !user) return;
 
+    setIsConnecting(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: true, 
@@ -673,14 +761,31 @@ function MainApp() {
       setLocalStream(stream);
       setActiveCall(incomingCall);
       setIncomingCall(null);
+      setIsConnecting(false);
 
       const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' }
+        ]
       });
       peerConnection.current = pc;
 
       stream.getTracks().forEach(track => pc.addTrack(track, stream));
-      pc.ontrack = (event) => setRemoteStream(event.streams[0]);
+      
+      pc.ontrack = (event) => {
+        console.log("Remote track received (Accept):", event.track.kind);
+        if (event.streams && event.streams[0]) {
+          setRemoteStream(event.streams[0]);
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        console.log("ICE Connection State (Accept):", pc.iceConnectionState);
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+          setIsConnecting(false);
+        }
+      };
 
       // ICE Candidates
       pc.onicecandidate = (event) => {
@@ -702,6 +807,7 @@ function MainApp() {
 
     } catch (err) {
       console.error("Error accepting call:", err);
+      setIsConnecting(false);
       handleDeclineCall();
     }
   };
@@ -2632,6 +2738,98 @@ function MainApp() {
           </section>
         )}
 
+        {activeTab === 'calls' && user && (
+          <section className="max-w-2xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500 pb-24">
+            <div className="px-4 pt-8">
+              <div className="flex items-center justify-between mb-8">
+                <h1 className="text-4xl font-black text-white tracking-tight">Calls</h1>
+                <div className="p-3 bg-slate-800/50 rounded-2xl border border-slate-700/50 backdrop-blur-xl">
+                  <Phone size={24} className="text-[#38bdf8]" />
+                </div>
+              </div>
+
+              {callLogs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-24 text-center bg-[#0f172a]/80 rounded-3xl border border-slate-800/50 border-dashed">
+                  <div className="w-20 h-20 bg-slate-800/50 rounded-full flex items-center justify-center mb-6">
+                    <Phone size={40} className="text-slate-600" />
+                  </div>
+                  <h3 className="text-xl font-bold text-white mb-2">No recent calls</h3>
+                  <p className="text-slate-500 max-w-xs mx-auto">Your call history will appear here once you start making or receiving calls.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {callLogs.map((log: any) => (
+                    <motion.div 
+                      key={log.id}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="group flex items-center gap-4 p-4 bg-[#0f172a]/80 hover:bg-slate-800/50 rounded-2xl border border-slate-800/50 transition-all cursor-pointer"
+                      onClick={() => {
+                        const targetUid = log.callerId === user?.uid ? log.receiverId : log.callerId;
+                        const targetName = log.callerId === user?.uid ? log.receiverName : log.callerName;
+                        const targetPhoto = log.callerId === user?.uid ? log.receiverPhoto : log.callerPhoto;
+                        setSelectedChatUser({ uid: targetUid, name: targetName, photoURL: targetPhoto });
+                        setActiveTab('messages');
+                      }}
+                    >
+                      <div className="relative">
+                        <div className="w-14 h-14 rounded-2xl overflow-hidden bg-slate-800 border border-slate-700">
+                          {log.callerId === user?.uid ? (
+                            log.receiverPhoto ? <img src={log.receiverPhoto} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : <div className="w-full h-full flex items-center justify-center text-xl text-white font-bold">{log.receiverName?.charAt(0)}</div>
+                          ) : (
+                            log.callerPhoto ? <img src={log.callerPhoto} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" /> : <div className="w-full h-full flex items-center justify-center text-xl text-white font-bold">{log.callerName?.charAt(0)}</div>
+                          )}
+                        </div>
+                        <div className={`absolute -bottom-1 -right-1 p-1.5 rounded-lg border-2 border-[#020617] ${log.type === 'video' ? 'bg-blue-500' : 'bg-green-500'}`}>
+                          {log.type === 'video' ? <Video size={12} className="text-white" /> : <Phone size={12} className="text-white" />}
+                        </div>
+                      </div>
+                      
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-white font-bold text-lg truncate mb-0.5">
+                          {log.callerId === user?.uid ? log.receiverName : log.callerName}
+                        </h3>
+                        <div className="flex items-center gap-2 text-sm">
+                          {log.status === 'missed' ? (
+                            <PhoneIncoming size={14} className="text-red-500" />
+                          ) : log.callerId === user?.uid ? (
+                            <PhoneOutgoing size={14} className="text-[#38bdf8]" />
+                          ) : (
+                            <PhoneIncoming size={14} className="text-green-400" />
+                          )}
+                          <span className={`${log.status === 'missed' ? 'text-red-500 font-medium' : 'text-slate-400'}`}>
+                            {log.status === 'missed' ? 'Missed' : log.status === 'dialed' ? 'Outgoing' : 'Incoming'}
+                          </span>
+                          <span className="text-slate-700">•</span>
+                          <span className="text-slate-500">
+                            {log.createdAt?.toDate ? new Date(log.createdAt.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Recent'}
+                          </span>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const targetUid = log.callerId === user?.uid ? log.receiverId : log.callerId;
+                            const targetName = log.callerId === user?.uid ? log.receiverName : log.callerName;
+                            const targetPhoto = log.callerId === user?.uid ? log.receiverPhoto : log.callerPhoto;
+                            setSelectedChatUser({ uid: targetUid, name: targetName, photoURL: targetPhoto });
+                            initiateCall(log.type);
+                          }}
+                          className="p-3 bg-[#38bdf8]/10 text-[#38bdf8] hover:bg-[#38bdf8] hover:text-white rounded-xl transition-all"
+                        >
+                          {log.type === 'video' ? <Video size={20} /> : <Phone size={20} />}
+                        </button>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
         {activeTab === 'profile' && user && (
           <section className="max-w-2xl mx-auto">
             <div className="bg-[#0f172a]/80 rounded-2xl shadow-sm border border-slate-800 p-6 mb-8 text-center relative">
@@ -3702,6 +3900,19 @@ function MainApp() {
           >
             <Wallet size={24} />
           </button>
+
+          <button 
+            onClick={() => {
+              if (!user) {
+                handleSignIn();
+                return;
+              }
+              setActiveTab('calls');
+            }}
+            className={`p-2 transition-colors ${activeTab === 'calls' ? 'text-[#38bdf8]' : 'text-slate-500 hover:text-slate-300'}`}
+          >
+            <Phone size={24} />
+          </button>
           
           {/* Center Add Button removed as requested */}
           
@@ -3894,6 +4105,15 @@ function MainApp() {
               </div>
             )}
 
+            {/* Hidden Audio for Voice Calls */}
+            {activeCall.type === 'voice' && remoteStream && (
+              <audio 
+                autoPlay 
+                playsInline 
+                ref={el => { if (el) el.srcObject = remoteStream; }}
+              />
+            )}
+
             {/* Call Info Header */}
             <div className={`relative z-10 text-center mt-16 ${activeCall.type === 'video' ? 'bg-gradient-to-b from-black/70 to-transparent w-full pt-8 pb-12 absolute top-0 left-0' : ''}`}>
               {activeCall.type === 'voice' && (
@@ -3926,7 +4146,7 @@ function MainApp() {
                 {activeCall.callerId === user?.uid ? activeCall.receiverName : activeCall.callerName}
               </h2>
               <p className="text-indigo-300 font-medium tracking-wide uppercase text-sm drop-shadow-md">
-                {activeCall.status === 'ringing' ? 'Ringing...' : formatDuration(callDuration)}
+                {isConnecting ? 'Connecting...' : (activeCall.status === 'ringing' ? 'Ringing...' : formatDuration(callDuration))}
               </p>
             </div>
 
@@ -3937,6 +4157,13 @@ function MainApp() {
                 className={`p-4 rounded-full transition-all border ${isMuted ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md'}`}
               >
                 {isMuted ? <MicOff size={26} /> : <Mic size={26} />}
+              </button>
+
+              <button 
+                onClick={toggleLoudspeaker}
+                className={`p-4 rounded-full transition-all border ${isLoudspeaker ? 'bg-white text-slate-900 border-white' : 'bg-slate-800/60 text-white border-slate-600 hover:bg-slate-700 backdrop-blur-md'}`}
+              >
+                {isLoudspeaker ? <Volume2 size={26} /> : <VolumeX size={26} />}
               </button>
               
               {activeCall.type === 'video' && (
