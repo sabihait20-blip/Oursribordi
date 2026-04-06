@@ -322,8 +322,13 @@ function MainApp() {
       ringtoneAudio.current?.play().catch(e => console.log("Audio play blocked", e));
     } else {
       ringtoneAudio.current?.pause();
-      if (ringtoneAudio.current) ringtoneAudio.current.currentTime = 0;
+      if (ringtoneAudio.current) {
+        ringtoneAudio.current.currentTime = 0;
+      }
     }
+    return () => {
+      ringtoneAudio.current?.pause();
+    };
   }, [incomingCall, activeCall]);
 
   // Handle Dial Tone for Outgoing Call
@@ -332,9 +337,14 @@ function MainApp() {
       callingAudio.current?.play().catch(e => console.log("Audio play blocked", e));
     } else {
       callingAudio.current?.pause();
-      if (callingAudio.current) callingAudio.current.currentTime = 0;
+      if (callingAudio.current) {
+        callingAudio.current.currentTime = 0;
+      }
     }
-  }, [activeCall, user]);
+    return () => {
+      callingAudio.current?.pause();
+    };
+  }, [activeCall?.status, activeCall?.callerId, user?.uid]);
 
   useEffect(() => {
     if (!user) return;
@@ -596,25 +606,39 @@ function MainApp() {
     setFacingMode(newFacingMode);
     
     try {
+      // Stop existing video tracks
+      localStream.getVideoTracks().forEach(track => track.stop());
+
       const newStream = await navigator.mediaDevices.getUserMedia({
-        audio: !isMuted,
-        video: { facingMode: newFacingMode }
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        },
+        video: { 
+          facingMode: newFacingMode,
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }
       });
       
-      const videoTrack = newStream.getVideoTracks()[0];
-      const oldVideoTrack = localStream.getVideoTracks()[0];
+      const newVideoTrack = newStream.getVideoTracks()[0];
       
-      if (videoTrack && oldVideoTrack) {
-        localStream.removeTrack(oldVideoTrack);
-        localStream.addTrack(videoTrack);
-        oldVideoTrack.stop();
-        
+      if (newVideoTrack) {
+        // Replace track in peer connection
         if (peerConnection.current) {
           const sender = peerConnection.current.getSenders().find(s => s.track?.kind === 'video');
           if (sender) {
-            sender.replaceTrack(videoTrack);
+            await sender.replaceTrack(newVideoTrack);
           }
         }
+
+        // Update local stream state
+        const updatedStream = new MediaStream([
+          ...localStream.getAudioTracks(),
+          newVideoTrack
+        ]);
+        setLocalStream(updatedStream);
       }
     } catch (err) {
       console.error("Error switching camera:", err);
@@ -635,8 +659,17 @@ function MainApp() {
     setIsConnecting(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: true, 
-        video: type === 'video' ? { facingMode } : false
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 48000
+        }, 
+        video: type === 'video' ? { 
+          facingMode,
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } : false
       });
       setLocalStream(stream);
 
@@ -742,8 +775,17 @@ function MainApp() {
     setIsConnecting(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: true, 
-        video: incomingCall.type === 'video' ? { facingMode } : false
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 48000
+        }, 
+        video: incomingCall.type === 'video' ? { 
+          facingMode,
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } : false
       });
       setLocalStream(stream);
       setActiveCall(incomingCall);
