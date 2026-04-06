@@ -60,6 +60,7 @@ interface UserProfile {
   savedPosts?: string[];
   isVerified?: boolean;
   fcmToken?: string;
+  isPrivate?: boolean;
 }
 
 interface UserPublicProfile {
@@ -68,6 +69,7 @@ interface UserPublicProfile {
   photoURL?: string;
   username?: string;
   fcmToken?: string;
+  isPrivate?: boolean;
 }
 
 interface Withdrawal {
@@ -996,6 +998,7 @@ function MainApp() {
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editName, setEditName] = useState('');
   const [editUsername, setEditUsername] = useState('');
+  const [isPrivate, setIsPrivate] = useState(false);
   const [isCheckingUsername, setIsCheckingUsername] = useState(false);
   const [usernameError, setUsernameError] = useState('');
   const [editPhotoFile, setEditPhotoFile] = useState<File | null>(null);
@@ -1343,11 +1346,11 @@ function MainApp() {
     // Fetch Leaderboard (Top 10 users by balance)
     const qLeaderboard = query(collection(db, 'users_public'), orderBy('balance', 'desc'));
     const unsubLeaderboard = onSnapshot(qLeaderboard, (snapshot) => {
-      const usersData = snapshot.docs.map(doc => ({
-        uid: doc.id,
-        ...doc.data()
-      })) as UserProfile[];
-      setLeaderboard(usersData.slice(0, 10));
+      const usersData = snapshot.docs
+        .map(doc => ({ uid: doc.id, ...doc.data() } as UserProfile))
+        .filter(u => !u.isPrivate)
+        .slice(0, 10);
+      setLeaderboard(usersData);
     });
 
     // Fetch all withdrawals for Admin
@@ -1725,6 +1728,7 @@ function MainApp() {
       const displayName = (editName || user.displayName || 'Anonymous').substring(0, 50);
       const newUsername = editUsername.toLowerCase();
       const oldUsername = userProfile?.username;
+      const newIsPrivate = isPrivate;
 
       // Update username mapping if changed
       if (newUsername && newUsername !== oldUsername) {
@@ -1748,6 +1752,7 @@ function MainApp() {
         name: displayName,
         photoURL: newPhotoURL,
         username: newUsername,
+        isPrivate: newIsPrivate,
         updatedAt: serverTimestamp()
       }, { merge: true });
 
@@ -1757,7 +1762,8 @@ function MainApp() {
         uid: user.uid,
         name: displayName,
         photoURL: newPhotoURL,
-        username: newUsername
+        username: newUsername,
+        isPrivate: newIsPrivate
       }, { merge: true });
       
       setUser({ ...user, displayName: displayName, photoURL: newPhotoURL } as User);
@@ -2935,6 +2941,8 @@ function MainApp() {
                     <button 
                       onClick={() => {
                         setEditName(user.displayName || '');
+                        setEditUsername(userProfile?.username || '');
+                        setIsPrivate(userProfile?.isPrivate || false);
                         setIsEditingProfile(true);
                       }}
                       className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors text-sm font-medium"
@@ -3122,6 +3130,19 @@ function MainApp() {
                       {!usernameError && editUsername && !isCheckingUsername && (
                         <p className="text-xs text-green-500 mt-1 text-left">Username is available!</p>
                       )}
+                    </div>
+
+                    <div className="flex items-center justify-between p-3 bg-slate-900/60 rounded-xl border border-slate-800">
+                      <div className="flex flex-col text-left">
+                        <span className="text-sm font-medium text-white">Privacy Mode</span>
+                        <span className="text-[10px] text-slate-500">Hide from leaderboard and search</span>
+                      </div>
+                      <button 
+                        onClick={() => setIsPrivate(!isPrivate)}
+                        className={`w-10 h-5 rounded-full transition-colors relative ${isPrivate ? 'bg-indigo-600' : 'bg-slate-700'}`}
+                      >
+                        <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${isPrivate ? 'right-1' : 'left-1'}`} />
+                      </button>
                     </div>
 
                     <div className="flex gap-3 pt-4">
@@ -3520,28 +3541,56 @@ function MainApp() {
                   </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-2">
-                  {allUsers.filter(u => u.name.toLowerCase().includes(userSearchQuery.toLowerCase())).map(u => (
-                    <button
-                      key={u.uid}
-                      onClick={() => {
-                        setSelectedChatUser(u);
-                        setShowNewChatModal(false);
-                        setUserSearchQuery('');
-                      }}
-                      className="w-full p-3 flex items-center gap-3 hover:bg-slate-800/50 rounded-xl transition-colors text-left"
-                    >
-                      {u.photoURL ? (
-                        <img src={u.photoURL} alt={u.name} className="w-10 h-10 rounded-full border border-slate-700 object-cover" referrerPolicy="no-referrer" />
-                      ) : (
-                        <div className="w-10 h-10 rounded-full bg-indigo-900/50 text-indigo-400 flex items-center justify-center font-bold text-lg shrink-0">
-                          {u.name.charAt(0).toUpperCase()}
+                  {userSearchQuery.trim() === '' ? (
+                    <div className="flex flex-col items-center justify-center py-12 text-slate-500 text-center px-4">
+                      <div className="w-16 h-16 bg-slate-800/50 rounded-full flex items-center justify-center mb-4">
+                        <Search size={32} className="text-slate-600" />
+                      </div>
+                      <h4 className="text-white font-medium mb-1">Search for Users</h4>
+                      <p className="text-xs max-w-[200px]">Enter a name to find someone and start a new chat or call.</p>
+                    </div>
+                  ) : (
+                    <>
+                      {allUsers.filter(u => {
+                        const query = userSearchQuery.toLowerCase();
+                        const nameMatch = u.name.toLowerCase().includes(query);
+                        const usernameMatch = u.username?.toLowerCase().includes(query);
+                        
+                        // If user is private, only show if exact username match or very close
+                        if (u.isPrivate) {
+                          return u.username?.toLowerCase() === query;
+                        }
+                        
+                        return nameMatch || usernameMatch;
+                      }).map(u => (
+                        <button
+                          key={u.uid}
+                          onClick={() => {
+                            setSelectedChatUser(u);
+                            setShowNewChatModal(false);
+                            setUserSearchQuery('');
+                          }}
+                          className="w-full p-3 flex items-center gap-3 hover:bg-slate-800/50 rounded-xl transition-colors text-left"
+                        >
+                          {u.photoURL ? (
+                            <img src={u.photoURL} alt={u.name} className="w-10 h-10 rounded-full border border-slate-700 object-cover" referrerPolicy="no-referrer" />
+                          ) : (
+                            <div className="w-10 h-10 rounded-full bg-indigo-900/50 text-indigo-400 flex items-center justify-center font-bold text-lg shrink-0">
+                              {u.name.charAt(0).toUpperCase()}
+                            </div>
+                          )}
+                          <div className="flex-1 overflow-hidden">
+                            <span className="font-medium text-white block truncate">{u.name}</span>
+                            {u.username && <span className="text-[10px] text-slate-500">@{u.username}</span>}
+                          </div>
+                        </button>
+                      ))}
+                      {allUsers.filter(u => u.name.toLowerCase().includes(userSearchQuery.toLowerCase())).length === 0 && (
+                        <div className="p-8 text-center text-slate-500">
+                          <p className="text-sm">No users found matching "{userSearchQuery}"</p>
                         </div>
                       )}
-                      <span className="font-medium text-white">{u.name}</span>
-                    </button>
-                  ))}
-                  {allUsers.filter(u => u.name.toLowerCase().includes(userSearchQuery.toLowerCase())).length === 0 && (
-                    <div className="p-8 text-center text-slate-500">No users found.</div>
+                    </>
                   )}
                 </div>
               </div>
