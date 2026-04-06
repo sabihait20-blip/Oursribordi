@@ -862,6 +862,50 @@ function MainApp() {
     }
   };
 
+  const handleDeleteCallLog = async (e: React.MouseEvent, logId: string) => {
+    e.stopPropagation();
+    try {
+      await deleteDoc(doc(db, 'call_logs', logId));
+    } catch (error) {
+      console.error("Error deleting call log:", error);
+    }
+  };
+
+  const handleDeleteMessage = async (messageId: string) => {
+    if (!selectedChatUser || !user) return;
+    const chatId = [user.uid, selectedChatUser.uid].sort().join('_');
+    try {
+      await deleteDoc(doc(db, 'chats', chatId, 'messages', messageId));
+    } catch (error) {
+      console.error("Error deleting message:", error);
+    }
+  };
+
+  const handleDeleteConversation = async (e: React.MouseEvent, chatId: string) => {
+    e.stopPropagation();
+    if (!user) return;
+    
+    const confirmDelete = window.confirm("Are you sure you want to delete this entire conversation? This cannot be undone.");
+    if (!confirmDelete) return;
+
+    try {
+      // Delete all messages in the conversation first
+      const messagesRef = collection(db, 'chats', chatId, 'messages');
+      const messagesSnap = await getDocs(messagesRef);
+      const deletePromises = messagesSnap.docs.map(doc => deleteDoc(doc.ref));
+      await Promise.all(deletePromises);
+
+      // Delete the conversation document itself
+      await deleteDoc(doc(db, 'chats', chatId));
+      
+      if (selectedChatUser && [user.uid, selectedChatUser.uid].sort().join('_') === chatId) {
+        setSelectedChatUser(null);
+      }
+    } catch (error) {
+      console.error("Error deleting conversation:", error);
+    }
+  };
+
   const handleEndCall = async () => {
     if (activeCall) {
       const callRef = doc(db, 'calls', activeCall.id);
@@ -2852,6 +2896,13 @@ function MainApp() {
                       
                       <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button 
+                          onClick={(e) => handleDeleteCallLog(e, log.id)}
+                          className="p-3 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-xl transition-all"
+                          title="Delete Log"
+                        >
+                          <Trash2 size={20} />
+                        </button>
+                        <button 
                           onClick={(e) => {
                             e.stopPropagation();
                             const targetUid = log.callerId === user?.uid ? log.receiverId : log.callerId;
@@ -3266,9 +3317,18 @@ function MainApp() {
                             </p>
                           </div>
                         </div>
-                        {isUnread && (
-                          <div className="w-3 h-3 bg-indigo-500 rounded-full shrink-0"></div>
-                        )}
+                        <div className="flex flex-col items-end gap-2">
+                          {isUnread && (
+                            <div className="w-3 h-3 bg-indigo-500 rounded-full"></div>
+                          )}
+                          <button 
+                            onClick={(e) => handleDeleteConversation(e, conv.id)}
+                            className="p-1.5 text-slate-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                            title="Delete Conversation"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
                       </button>
                     );
                   })
@@ -3321,28 +3381,48 @@ function MainApp() {
                     {chatMessages.map(msg => {
                       const isMe = msg.senderId === user.uid;
                       return (
-                        <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                          <div className={`max-w-[75%] rounded-2xl px-4 py-2 ${isMe ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-[#0f172a]/80 border border-slate-800 text-slate-200 rounded-bl-sm'}`}>
-                            {msg.type === 'voice' ? (
-                              <div className="flex items-center gap-3 py-1">
-                                <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
-                                  <Mic size={16} />
+                        <div key={msg.id} className={`flex flex-col group ${isMe ? 'items-end' : 'items-start'}`}>
+                          <div className="flex items-center gap-2 max-w-[85%]">
+                            {isMe && (
+                              <button 
+                                onClick={() => handleDeleteMessage(msg.id)}
+                                className="p-1 text-slate-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 shrink-0"
+                                title="Delete Message"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                            <div className={`rounded-2xl px-4 py-2 ${isMe ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-[#0f172a]/80 border border-slate-800 text-slate-200 rounded-bl-sm'}`}>
+                              {msg.type === 'voice' ? (
+                                <div className="flex items-center gap-3 py-1">
+                                  <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+                                    <Mic size={16} />
+                                  </div>
+                                  <audio src={msg.fileUrl} controls className="h-8 w-40 filter invert brightness-200" />
+                                  <span className="text-[10px] opacity-70">{msg.duration}s</span>
                                 </div>
-                                <audio src={msg.fileUrl} controls className="h-8 w-40 filter invert brightness-200" />
-                                <span className="text-[10px] opacity-70">{msg.duration}s</span>
-                              </div>
-                            ) : msg.type === 'file' ? (
-                              <a href={msg.fileUrl} download={msg.fileName} className="flex items-center gap-3 py-1 hover:underline">
-                                <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
-                                  <Paperclip size={16} />
-                                </div>
-                                <div className="overflow-hidden">
-                                  <div className="text-sm font-medium truncate">{msg.fileName}</div>
-                                  <div className="text-[10px] opacity-70">{(msg.fileSize || 0) / 1024 > 1024 ? `${((msg.fileSize || 0) / (1024 * 1024)).toFixed(1)} MB` : `${((msg.fileSize || 0) / 1024).toFixed(1)} KB`}</div>
-                                </div>
-                              </a>
-                            ) : (
-                              msg.text
+                              ) : msg.type === 'file' ? (
+                                <a href={msg.fileUrl} download={msg.fileName} className="flex items-center gap-3 py-1 hover:underline">
+                                  <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+                                    <Paperclip size={16} />
+                                  </div>
+                                  <div className="overflow-hidden">
+                                    <div className="text-sm font-medium truncate">{msg.fileName}</div>
+                                    <div className="text-[10px] opacity-70">{(msg.fileSize || 0) / 1024 > 1024 ? `${((msg.fileSize || 0) / (1024 * 1024)).toFixed(1)} MB` : `${((msg.fileSize || 0) / 1024).toFixed(1)} KB`}</div>
+                                  </div>
+                                </a>
+                              ) : (
+                                msg.text
+                              )}
+                            </div>
+                            {!isMe && (
+                              <button 
+                                onClick={() => handleDeleteMessage(msg.id)}
+                                className="p-1 text-slate-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 shrink-0"
+                                title="Delete Message"
+                              >
+                                <Trash2 size={14} />
+                              </button>
                             )}
                           </div>
                           {isMe && (
