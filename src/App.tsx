@@ -137,6 +137,8 @@ interface ChatConversation {
   lastMessageTime: any;
   lastSenderId: string;
   isRead: boolean;
+  status?: 'pending' | 'accepted';
+  initiatedBy?: string;
 }
 
 interface AdBanner {
@@ -487,6 +489,9 @@ function MainApp() {
         const base64data = reader.result as string;
         
         const chatId = [user.uid, selectedChatUser.uid].sort().join('_');
+        const chatDoc = await getDoc(doc(db, 'chats', chatId));
+        const isNewChat = !chatDoc.exists();
+        
         const messageData = {
           text: '🎤 Voice Message',
           senderId: user.uid,
@@ -498,13 +503,21 @@ function MainApp() {
         };
 
         await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
-        await setDoc(doc(db, 'chats', chatId), {
+        
+        const chatData: any = {
           lastMessage: '🎤 Voice Message',
           lastSenderId: user.uid,
-          lastTimestamp: serverTimestamp(),
+          lastMessageTime: serverTimestamp(),
           participants: [user.uid, selectedChatUser.uid],
           isRead: false
-        }, { merge: true });
+        };
+
+        if (isNewChat) {
+          chatData.status = 'pending';
+          chatData.initiatedBy = user.uid;
+        }
+
+        await setDoc(doc(db, 'chats', chatId), chatData, { merge: true });
       };
     } catch (err) {
       console.error("Error sending voice message:", err);
@@ -531,6 +544,8 @@ function MainApp() {
       reader.onloadend = async () => {
         const base64data = reader.result as string;
         const chatId = [user.uid, selectedChatUser.uid].sort().join('_');
+        const chatDoc = await getDoc(doc(db, 'chats', chatId));
+        const isNewChat = !chatDoc.exists();
         
         const messageData = {
           text: `📁 ${file.name}`,
@@ -544,13 +559,21 @@ function MainApp() {
         };
 
         await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
-        await setDoc(doc(db, 'chats', chatId), {
+        
+        const chatData: any = {
           lastMessage: `📁 ${file.name}`,
           lastSenderId: user.uid,
-          lastTimestamp: serverTimestamp(),
+          lastMessageTime: serverTimestamp(),
           participants: [user.uid, selectedChatUser.uid],
           isRead: false
-        }, { merge: true });
+        };
+
+        if (isNewChat) {
+          chatData.status = 'pending';
+          chatData.initiatedBy = user.uid;
+        }
+
+        await setDoc(doc(db, 'chats', chatId), chatData, { merge: true });
       };
     } catch (err) {
       console.error("Error uploading file:", err);
@@ -1652,6 +1675,31 @@ function MainApp() {
     }
   };
 
+  const handleAcceptChat = async (chatId: string) => {
+    try {
+      await updateDoc(doc(db, 'chats', chatId), {
+        status: 'accepted'
+      });
+    } catch (err) {
+      console.error("Error accepting chat:", err);
+    }
+  };
+
+  const handleRejectChat = async (chatId: string) => {
+    try {
+      // Delete all messages first
+      const messagesSnap = await getDocs(collection(db, 'chats', chatId, 'messages'));
+      const deletePromises = messagesSnap.docs.map(d => deleteDoc(d.ref));
+      await Promise.all(deletePromises);
+      
+      // Delete the chat document
+      await deleteDoc(doc(db, 'chats', chatId));
+      setSelectedChatUser(null);
+    } catch (err) {
+      console.error("Error rejecting chat:", err);
+    }
+  };
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !selectedChatUser || !newMessage.trim()) return;
@@ -1669,6 +1717,9 @@ function MainApp() {
     }
     
     const chatId = [user.uid, selectedChatUser.uid].sort().join('_');
+    const chatDoc = await getDoc(doc(db, 'chats', chatId));
+    const isNewChat = !chatDoc.exists();
+    
     const messageText = newMessage.trim();
     setNewMessage('');
 
@@ -1680,13 +1731,20 @@ function MainApp() {
       type: 'text'
     });
 
-    await setDoc(doc(db, 'chats', chatId), {
+    const chatData: any = {
       participants: [user.uid, selectedChatUser.uid],
       lastMessage: messageText,
       lastMessageTime: serverTimestamp(),
       lastSenderId: user.uid,
       isRead: false
-    }, { merge: true });
+    };
+
+    if (isNewChat) {
+      chatData.status = 'pending';
+      chatData.initiatedBy = user.uid;
+    }
+
+    await setDoc(doc(db, 'chats', chatId), chatData, { merge: true });
 
     // Send Push Notification
     try {
@@ -3548,14 +3606,20 @@ function MainApp() {
                         <div className="flex-1 overflow-hidden">
                           <h3 className={`truncate ${isUnread ? 'font-bold text-white' : 'font-semibold text-slate-200'}`}>{otherUser.name}</h3>
                           <div className="flex items-center gap-1 mt-0.5">
-                            {conv.lastSenderId === user.uid && (
-                              <span className="shrink-0">
-                                {conv.isRead ? <CheckCheck size={14} className="text-emerald-500" /> : <Check size={14} className="text-slate-400" />}
-                              </span>
+                            {conv.status === 'pending' && conv.initiatedBy !== user.uid ? (
+                              <span className="text-xs font-bold text-indigo-400 bg-indigo-400/10 px-1.5 py-0.5 rounded">Message Request</span>
+                            ) : (
+                              <>
+                                {conv.lastSenderId === user.uid && (
+                                  <span className="shrink-0">
+                                    {conv.isRead ? <CheckCheck size={14} className="text-emerald-500" /> : <Check size={14} className="text-slate-400" />}
+                                  </span>
+                                )}
+                                <p className={`text-sm truncate ${isUnread ? 'font-bold text-white' : 'text-slate-400'}`}>
+                                  {conv.lastSenderId === user.uid ? 'You: ' : ''}{conv.lastMessage}
+                                </p>
+                              </>
                             )}
-                            <p className={`text-sm truncate ${isUnread ? 'font-bold text-white' : 'text-slate-400'}`}>
-                              {conv.lastSenderId === user.uid ? 'You: ' : ''}{conv.lastMessage}
-                            </p>
                           </div>
                         </div>
                         <div className="flex flex-col items-end gap-2">
@@ -3732,50 +3796,80 @@ function MainApp() {
                     )}
                   </div>
 
-                  <div className="p-4 bg-[#0f172a]/80 border-t border-slate-800">
-                    <form onSubmit={handleSendMessage} className="flex items-center gap-2">
-                      <div className="flex items-center gap-1">
-                        <label className="p-2 text-slate-400 hover:text-indigo-400 cursor-pointer transition-colors">
-                          <Paperclip size={20} />
-                          <input type="file" className="hidden" onChange={handleFileUpload} />
-                        </label>
+                  {/* Message Request UI */}
+                  {conversations.find(c => c.id === [user.uid, selectedChatUser.uid].sort().join('_'))?.status === 'pending' && 
+                   conversations.find(c => c.id === [user.uid, selectedChatUser.uid].sort().join('_'))?.initiatedBy !== user.uid ? (
+                    <div className="p-8 bg-slate-900/40 border-t border-slate-800 flex flex-col items-center justify-center gap-4 text-center">
+                      <div className="w-16 h-16 rounded-full bg-indigo-500/10 flex items-center justify-center text-indigo-400 mb-2">
+                        <MessageCircle size={32} />
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="text-lg font-bold text-white">Message Request</h4>
+                        <p className="text-sm text-slate-400 max-w-xs">
+                          {selectedChatUser.name} wants to message you. Accept to start chatting or reject to delete.
+                        </p>
+                      </div>
+                      <div className="flex gap-3 w-full max-w-xs">
                         <button 
-                          type="button"
-                          onMouseDown={startRecording}
-                          onMouseUp={stopRecording}
-                          onMouseLeave={stopRecording}
-                          className={`p-2 transition-colors ${isRecording ? 'text-red-500 animate-pulse' : 'text-slate-400 hover:text-indigo-400'}`}
-                          title="Hold to record voice"
+                          onClick={() => handleAcceptChat([user.uid, selectedChatUser.uid].sort().join('_'))}
+                          className="flex-1 py-3 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-600/20"
                         >
-                          <Mic size={20} />
+                          Accept
+                        </button>
+                        <button 
+                          onClick={() => handleRejectChat([user.uid, selectedChatUser.uid].sort().join('_'))}
+                          className="flex-1 py-3 bg-slate-800 text-slate-300 rounded-2xl font-bold hover:bg-slate-700 transition-all"
+                        >
+                          Reject
                         </button>
                       </div>
-                      
-                      <div className="flex-1 relative">
-                        <input 
-                          type="text"
-                          value={newMessage}
-                          onChange={(e) => setNewMessage(e.target.value)}
-                          placeholder={isRecording ? `Recording... ${recordingDuration}s` : "Type a message..."}
-                          className="w-full px-4 py-2.5 bg-slate-800/60 border-transparent focus:bg-[#0f172a]/80 border focus:border-indigo-900/300 rounded-full outline-none transition-all"
-                          disabled={isRecording}
-                        />
-                        {isUploadingFile && (
-                          <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                            <Loader2 size={16} className="animate-spin text-indigo-400" />
-                          </div>
-                        )}
-                      </div>
-                      
-                      <button 
-                        type="submit"
-                        disabled={!newMessage.trim() || isRecording || isUploadingFile}
-                        className="p-2.5 bg-indigo-500 text-white rounded-full hover:bg-indigo-600 transition-colors disabled:opacity-50"
-                      >
-                        <Reply size={20} className="rotate-180" />
-                      </button>
-                    </form>
-                  </div>
+                    </div>
+                  ) : (
+                    <div className="p-4 bg-[#0f172a]/80 border-t border-slate-800">
+                      <form onSubmit={handleSendMessage} className="flex items-center gap-2">
+                        <div className="flex items-center gap-1">
+                          <label className="p-2 text-slate-400 hover:text-indigo-400 cursor-pointer transition-colors">
+                            <Paperclip size={20} />
+                            <input type="file" className="hidden" onChange={handleFileUpload} />
+                          </label>
+                          <button 
+                            type="button"
+                            onMouseDown={startRecording}
+                            onMouseUp={stopRecording}
+                            onMouseLeave={stopRecording}
+                            className={`p-2 transition-colors ${isRecording ? 'text-red-500 animate-pulse' : 'text-slate-400 hover:text-indigo-400'}`}
+                            title="Hold to record voice"
+                          >
+                            <Mic size={20} />
+                          </button>
+                        </div>
+                        
+                        <div className="flex-1 relative">
+                          <input 
+                            type="text"
+                            value={newMessage}
+                            onChange={(e) => setNewMessage(e.target.value)}
+                            placeholder={isRecording ? `Recording... ${recordingDuration}s` : "Type a message..."}
+                            className="w-full px-4 py-2.5 bg-slate-800/60 border-transparent focus:bg-[#0f172a]/80 border focus:border-indigo-900/300 rounded-full outline-none transition-all"
+                            disabled={isRecording}
+                          />
+                          {isUploadingFile && (
+                            <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                              <Loader2 size={16} className="animate-spin text-indigo-400" />
+                            </div>
+                          )}
+                        </div>
+                        
+                        <button 
+                          type="submit"
+                          disabled={!newMessage.trim() || isRecording || isUploadingFile}
+                          className="p-2.5 bg-indigo-500 text-white rounded-full hover:bg-indigo-600 transition-colors disabled:opacity-50"
+                        >
+                          <Reply size={20} className="rotate-180" />
+                        </button>
+                      </form>
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="flex-1 flex flex-col items-center justify-center text-slate-500 p-8 text-center">
