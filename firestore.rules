@@ -125,7 +125,7 @@ service cloud.firestore {
     }
 
     function isValidUser(data) {
-      return hasOnlyAllowedFields(['uid', 'name', 'email', 'balance', 'photoURL', 'username', 'updatedAt', 'fcmToken', 'role', 'savedPosts', 'isVerified', 'followersCount', 'followingCount', 'createdAt']) &&
+      return hasOnlyAllowedFields(['uid', 'name', 'email', 'balance', 'photoURL', 'username', 'updatedAt', 'fcmToken', 'role', 'savedPosts', 'isVerified', 'followersCount', 'followingCount', 'createdAt', 'isPrivate', 'blockedUsers', 'isOnline', 'lastSeen']) &&
              hasRequiredFields(['uid']) &&
              data.uid is string &&
              (!('name' in data) || (data.name is string && data.name.size() <= 100)) &&
@@ -140,7 +140,11 @@ service cloud.firestore {
              (!('savedPosts' in data) || data.savedPosts is list) &&
              (!('isVerified' in data) || data.isVerified is bool) &&
              (!('followersCount' in data) || data.followersCount is number) &&
-             (!('followingCount' in data) || data.followingCount is number);
+             (!('followingCount' in data) || data.followingCount is number) &&
+             (!('isPrivate' in data) || data.isPrivate is bool) &&
+             (!('blockedUsers' in data) || data.blockedUsers is list) &&
+             (!('isOnline' in data) || data.isOnline is bool) &&
+             (!('lastSeen' in data) || data.lastSeen is timestamp);
     }
 
     function isValidWithdrawal(data) {
@@ -158,7 +162,7 @@ service cloud.firestore {
     }
 
     function isValidUserPublic(data) {
-      return hasOnlyAllowedFields(['uid', 'name', 'photoURL', 'username', 'balance', 'isVerified', 'createdAt']) &&
+      return hasOnlyAllowedFields(['uid', 'name', 'photoURL', 'username', 'balance', 'isVerified', 'createdAt', 'isPrivate', 'isOnline', 'lastSeen', 'fcmToken']) &&
              hasRequiredFields(['uid', 'name']) &&
              data.uid is string &&
              data.name is string &&
@@ -167,11 +171,15 @@ service cloud.firestore {
              (!('username' in data) || (data.username is string && data.username.matches("^[a-zA-Z0-9_]{3,20}$"))) &&
              (!('balance' in data) || data.balance is number) &&
              (!('isVerified' in data) || data.isVerified is bool) &&
-             (!('createdAt' in data) || data.createdAt is timestamp);
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('isPrivate' in data) || data.isPrivate is bool) &&
+             (!('isOnline' in data) || data.isOnline is bool) &&
+             (!('lastSeen' in data) || data.lastSeen is timestamp) &&
+             (!('fcmToken' in data) || data.fcmToken is string);
     }
 
     function isValidMessage(data) {
-      return hasOnlyAllowedFields(['text', 'senderId', 'createdAt', 'status', 'type', 'fileUrl', 'fileName', 'fileSize', 'duration']) &&
+      return hasOnlyAllowedFields(['text', 'senderId', 'createdAt', 'status', 'type', 'fileUrl', 'fileName', 'fileSize', 'duration', 'reactions']) &&
              hasRequiredFields(['text', 'senderId', 'createdAt']) &&
              data.text is string &&
              validStringLength('text', 1, 1000) &&
@@ -182,7 +190,8 @@ service cloud.firestore {
              (!('fileUrl' in data) || data.fileUrl is string) &&
              (!('fileName' in data) || data.fileName is string) &&
              (!('fileSize' in data) || data.fileSize is number) &&
-             (!('duration' in data) || data.duration is number);
+             (!('duration' in data) || data.duration is number) &&
+             (!('reactions' in data) || data.reactions is map);
     }
 
     function isValidCall(data) {
@@ -265,6 +274,18 @@ service cloud.firestore {
              (!('duration' in data) || data.duration is number);
     }
 
+    function isValidVerificationRequest(data) {
+      return hasOnlyAllowedFields(['uid', 'name', 'email', 'username', 'status', 'createdAt', 'photoURL']) &&
+             hasRequiredFields(['uid', 'name', 'email', 'status', 'createdAt']) &&
+             data.uid is string &&
+             data.name is string &&
+             data.email is string &&
+             data.status in ['pending', 'approved', 'rejected'] &&
+             data.createdAt is timestamp &&
+             (!('username' in data) || data.username is string) &&
+             (!('photoURL' in data) || data.photoURL is string);
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -332,8 +353,10 @@ service cloud.firestore {
                       request.resource.data.createdAt == request.time;
         allow update: if isAuthenticated() && 
                       chatId.matches('.*' + request.auth.uid + '.*') &&
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']) &&
-                      request.resource.data.status == 'read';
+                      (
+                        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']) && request.resource.data.status == 'read') ||
+                        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions']) && isValidMessage(request.resource.data))
+                      );
       }
     }
 
@@ -389,6 +412,17 @@ service cloud.firestore {
                     username.matches("^[a-zA-Z0-9_]{3,20}$") &&
                     !exists(/databases/$(database)/documents/usernames/$(username));
       allow delete: if isAuthenticated() && resource.data.uid == request.auth.uid;
+    }
+
+    match /verification_requests/{requestId} {
+      allow read: if isAdmin() || (isAuthenticated() && request.auth.uid == resource.data.uid);
+      allow create: if isAuthenticated() && 
+                    isValidVerificationRequest(request.resource.data) && 
+                    request.auth.uid == request.resource.data.uid &&
+                    request.resource.data.createdAt == request.time;
+      allow update: if isAdmin() && 
+                    isValidVerificationRequest(request.resource.data) && 
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
     }
 
     match /posts/{postId} {

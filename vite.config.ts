@@ -20,17 +20,17 @@ export default defineConfig(({mode}) => {
           theme_color: '#020617',
           icons: [
             {
-              src: 'pwa-192x192.png',
+              src: 'https://i.ibb.co.com/3yfqSbLT/IMG-20260406-172934.png',
               sizes: '192x192',
               type: 'image/png'
             },
             {
-              src: 'pwa-512x512.png',
+              src: 'https://i.ibb.co.com/3yfqSbLT/IMG-20260406-172934.png',
               sizes: '512x512',
               type: 'image/png'
             },
             {
-              src: 'pwa-512x512.png',
+              src: 'https://i.ibb.co.com/3yfqSbLT/IMG-20260406-172934.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'any maskable'

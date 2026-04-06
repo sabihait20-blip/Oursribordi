@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import React, { useState, useEffect, useRef, ErrorInfo, ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, useParams, useNavigate, Link } from 'react-router-dom';
-import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search, Edit2, UserPlus, UserMinus, Bookmark, Shield, Trophy, Award, Bell, Camera, Eye, AtSign, ShoppingBag, Store, ShoppingCart, Users, BarChart3, Megaphone, FileText, Mic, MicOff, Phone, Paperclip, Video, VideoOff, SwitchCamera, PhoneOff, PhoneIncoming, PhoneOutgoing, Volume2, VolumeX } from 'lucide-react';
+import { Upload, Download, X, Image as ImageIcon, Loader2, LogIn, LogOut, Trash2, ChevronLeft, ChevronRight, Lock, Globe, Heart, MessageCircle, Share2, Reply, Home, Wallet, User as UserIcon, Plus, Check, CheckCheck, Search, Edit2, UserPlus, UserMinus, Bookmark, Shield, Trophy, Award, Bell, Camera, Eye, AtSign, ShoppingBag, Store, ShoppingCart, Users, BarChart3, Megaphone, FileText, Mic, MicOff, Phone, Paperclip, Video, VideoOff, SwitchCamera, PhoneOff, PhoneIncoming, PhoneOutgoing, Volume2, VolumeX, ShieldCheck, Ban } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { collection, addDoc, onSnapshot, query, serverTimestamp, Timestamp, deleteDoc, doc, where, or, updateDoc, arrayUnion, arrayRemove, orderBy, getDoc, getDocs, setDoc, increment } from 'firebase/firestore';
 import { onAuthStateChanged, User, updateProfile } from 'firebase/auth';
@@ -61,6 +61,9 @@ interface UserProfile {
   isVerified?: boolean;
   fcmToken?: string;
   isPrivate?: boolean;
+  blockedUsers?: string[];
+  isOnline?: boolean;
+  lastSeen?: any;
 }
 
 interface UserPublicProfile {
@@ -70,6 +73,8 @@ interface UserPublicProfile {
   username?: string;
   fcmToken?: string;
   isPrivate?: boolean;
+  isOnline?: boolean;
+  lastSeen?: any;
 }
 
 interface Withdrawal {
@@ -95,6 +100,7 @@ interface ChatMessage {
   fileName?: string;
   fileSize?: number;
   duration?: number;
+  reactions?: { [emoji: string]: string[] };
 }
 
 interface CallSession {
@@ -138,6 +144,16 @@ interface AdBanner {
   imageUrl: string;
   linkUrl: string;
   active: boolean;
+  createdAt: any;
+}
+
+interface VerificationRequest {
+  id: string;
+  uid: string;
+  name: string;
+  email: string;
+  username?: string;
+  status: 'pending' | 'approved' | 'rejected';
   createdAt: any;
 }
 
@@ -658,6 +674,18 @@ function MainApp() {
     const callTarget = targetUser || selectedChatUser;
     if (!callTarget || !user) return;
 
+    // Check if blocked
+    const recipientDoc = await getDoc(doc(db, 'users', callTarget.uid));
+    const recipientData = recipientDoc.data();
+    if (recipientData?.blockedUsers?.includes(user.uid)) {
+      alert("You cannot call this user.");
+      return;
+    }
+    if (userProfile?.blockedUsers?.includes(callTarget.uid)) {
+      alert("Unblock this user to call.");
+      return;
+    }
+
     setIsConnecting(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -1028,6 +1056,7 @@ function MainApp() {
   const [newMessage, setNewMessage] = useState('');
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [reactionPickerMessageId, setReactionPickerMessageId] = useState<string | null>(null);
 
   // Profile viewing state
   const [viewingUserId, setViewingUserId] = useState<string | null>(null);
@@ -1041,7 +1070,7 @@ function MainApp() {
   const [adminSearchQuery, setAdminSearchQuery] = useState('');
   const [isEditingUserBalance, setIsEditingUserBalance] = useState<string | null>(null);
   const [newUserBalance, setNewUserBalance] = useState(0);
-  const [adminActiveSubTab, setAdminActiveSubTab] = useState<'withdrawals' | 'users' | 'posts' | 'ads'>('withdrawals');
+  const [adminActiveSubTab, setAdminActiveSubTab] = useState<'withdrawals' | 'users' | 'posts' | 'ads' | 'verification'>('withdrawals');
   const [globalNotifications, setGlobalNotifications] = useState<any[]>([]);
   const [adminStats, setAdminStats] = useState({
     totalUsers: 0,
@@ -1051,6 +1080,7 @@ function MainApp() {
     totalPosts: 0
   });
   const [allPosts, setAllPosts] = useState<Post[]>([]);
+  const [postSearchQuery, setPostSearchQuery] = useState('');
   const [adminNotificationTitle, setAdminNotificationTitle] = useState('');
   const [adminNotificationBody, setAdminNotificationBody] = useState('');
   const [isSendingNotification, setIsSendingNotification] = useState(false);
@@ -1059,6 +1089,8 @@ function MainApp() {
   const [newAdFile, setNewAdFile] = useState<File | null>(null);
   const [isUploadingAd, setIsUploadingAd] = useState(false);
   const [adUploadProgress, setAdUploadProgress] = useState(0);
+  const [verificationRequests, setVerificationRequests] = useState<VerificationRequest[]>([]);
+  const [isRequestingVerification, setIsRequestingVerification] = useState(false);
   const [leaderboard, setLeaderboard] = useState<UserProfile[]>([]);
   const [profileViewTab, setProfileViewTab] = useState<'posts' | 'saved'>('posts');
   const isAdmin = user?.email === 'sabihait20@gmail.com' || userProfile?.role === 'admin';
@@ -1341,6 +1373,44 @@ function MainApp() {
   }, []);
 
   useEffect(() => {
+    if (!user) return;
+
+    const userRef = doc(db, 'users', user.uid);
+    const publicUserRef = doc(db, 'users_public', user.uid);
+
+    const setOnlineStatus = async (status: boolean) => {
+      try {
+        await setDoc(userRef, { 
+          isOnline: status, 
+          lastSeen: serverTimestamp() 
+        }, { merge: true });
+        await setDoc(publicUserRef, { 
+          isOnline: status, 
+          lastSeen: serverTimestamp() 
+        }, { merge: true });
+      } catch (error) {
+        console.error("Error updating online status:", error);
+        // If it's a permission error, it might be due to rules. 
+        // The rules have been updated, but we keep this for debugging.
+      }
+    };
+
+    setOnlineStatus(true);
+
+    const handleVisibilityChange = () => {
+      setOnlineStatus(document.visibilityState === 'visible');
+    };
+
+    window.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', () => setOnlineStatus(false));
+
+    return () => {
+      setOnlineStatus(false);
+      window.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [user]);
+
+  useEffect(() => {
     if (!isAuthReady) return;
 
     // Fetch Leaderboard (Top 10 users by balance)
@@ -1433,6 +1503,10 @@ function MainApp() {
       setGlobalNotifications(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
+    const unsubVerificationRequests = onSnapshot(query(collection(db, 'verification_requests'), orderBy('createdAt', 'desc')), (snapshot) => {
+      setVerificationRequests(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as VerificationRequest)));
+    });
+
     const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'));
 
     const unsubBanners = onSnapshot(query(collection(db, 'ad_banners'), where('active', '==', true), orderBy('createdAt', 'desc')), (snapshot) => {
@@ -1449,7 +1523,15 @@ function MainApp() {
         !post.visibility || post.visibility === 'public' || (user && post.uid === user.uid)
       );
 
-      setPosts(visiblePosts);
+      const searchedPosts = postSearchQuery.trim() === '' 
+        ? visiblePosts 
+        : visiblePosts.filter(post => 
+            post.caption?.toLowerCase().includes(postSearchQuery.toLowerCase()) ||
+            post.name?.toLowerCase().includes(postSearchQuery.toLowerCase()) ||
+            post.username?.toLowerCase().includes(postSearchQuery.toLowerCase())
+          );
+
+      setPosts(searchedPosts);
     }, (error) => {
       console.error("Error fetching posts:", error);
     });
@@ -1461,8 +1543,9 @@ function MainApp() {
       unsubStories();
       unsubBanners();
       unsubGlobalNotifications();
+      unsubVerificationRequests();
     };
-  }, [isAuthReady, user, isAdmin]);
+  }, [isAuthReady, user, isAdmin, postSearchQuery]);
 
   useEffect(() => {
     if (adBanners.length <= 1) return;
@@ -1572,6 +1655,18 @@ function MainApp() {
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !selectedChatUser || !newMessage.trim()) return;
+
+    // Check if blocked
+    const recipientDoc = await getDoc(doc(db, 'users', selectedChatUser.uid));
+    const recipientData = recipientDoc.data();
+    if (recipientData?.blockedUsers?.includes(user.uid)) {
+      alert("You cannot message this user.");
+      return;
+    }
+    if (userProfile?.blockedUsers?.includes(selectedChatUser.uid)) {
+      alert("Unblock this user to send a message.");
+      return;
+    }
     
     const chatId = [user.uid, selectedChatUser.uid].sort().join('_');
     const messageText = newMessage.trim();
@@ -1709,6 +1804,87 @@ function MainApp() {
     const timeoutId = setTimeout(checkUsername, 500);
     return () => clearTimeout(timeoutId);
   }, [editUsername, userProfile?.username]);
+
+  const handleBlockUser = async (targetUid: string) => {
+    if (!user) return;
+    const userRef = doc(db, 'users', user.uid);
+    const isBlocked = userProfile?.blockedUsers?.includes(targetUid);
+    
+    try {
+      await updateDoc(userRef, {
+        blockedUsers: isBlocked ? arrayRemove(targetUid) : arrayUnion(targetUid)
+      });
+    } catch (error) {
+      console.error("Error blocking user:", error);
+    }
+  };
+
+  const handleReaction = async (messageId: string, emoji: string) => {
+    if (!user || !selectedChatUser) return;
+    const chatId = [user.uid, selectedChatUser.uid].sort().join('_');
+    const messageRef = doc(db, 'chats', chatId, 'messages', messageId);
+    
+    try {
+      const msgSnap = await getDoc(messageRef);
+      if (!msgSnap.exists()) return;
+      
+      const reactions = msgSnap.data().reactions || {};
+      const uids = reactions[emoji] || [];
+      
+      if (uids.includes(user.uid)) {
+        reactions[emoji] = uids.filter((id: string) => id !== user.uid);
+        if (reactions[emoji].length === 0) delete reactions[emoji];
+      } else {
+        reactions[emoji] = [...uids, user.uid];
+      }
+      
+      await updateDoc(messageRef, { reactions });
+      setReactionPickerMessageId(null);
+    } catch (error) {
+      console.error("Error adding reaction:", error);
+    }
+  };
+
+  const handleRequestVerification = async () => {
+    if (!user || !userProfile) return;
+    setIsRequestingVerification(true);
+    try {
+      await addDoc(collection(db, 'verification_requests'), {
+        uid: user.uid,
+        name: userProfile.name,
+        email: userProfile.email,
+        username: userProfile.username || '',
+        status: 'pending',
+        createdAt: serverTimestamp()
+      });
+      alert("Verification request submitted!");
+    } catch (error) {
+      console.error("Error requesting verification:", error);
+      alert("Failed to submit verification request.");
+    } finally {
+      setIsRequestingVerification(false);
+    }
+  };
+
+  const handleApproveVerification = async (request: VerificationRequest) => {
+    try {
+      await updateDoc(doc(db, 'users', request.uid), { isVerified: true });
+      await updateDoc(doc(db, 'users_public', request.uid), { isVerified: true });
+      await updateDoc(doc(db, 'verification_requests', request.id), { status: 'approved' });
+      alert("Verification approved!");
+    } catch (error) {
+      console.error("Error approving verification:", error);
+    }
+  };
+
+  const handleRejectVerification = async (requestId: string) => {
+    try {
+      await updateDoc(doc(db, 'verification_requests', requestId), { status: 'rejected' });
+      alert("Verification rejected.");
+    } catch (error) {
+      console.error("Error rejecting verification:", error);
+    }
+  };
 
   const handleSaveProfile = async () => {
     if (!user) return;
@@ -2304,6 +2480,30 @@ function MainApp() {
       <main className="max-w-5xl mx-auto px-4 py-8 pb-24">
         {activeTab === 'home' && (
           <>
+            {/* Post Search Bar */}
+            <section className="mb-8 max-w-2xl mx-auto">
+              <div className="relative group">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <Search size={20} className="text-slate-500 group-focus-within:text-indigo-400 transition-colors" />
+                </div>
+                <input 
+                  type="text" 
+                  value={postSearchQuery}
+                  onChange={(e) => setPostSearchQuery(e.target.value)}
+                  placeholder="Search posts, captions, or users..."
+                  className="w-full pl-12 pr-4 py-4 bg-[#0f172a]/80 border border-slate-800 rounded-2xl text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all shadow-xl"
+                />
+                {postSearchQuery && (
+                  <button 
+                    onClick={() => setPostSearchQuery('')}
+                    className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-500 hover:text-white transition-colors"
+                  >
+                    <X size={18} />
+                  </button>
+                )}
+              </div>
+            </section>
+
             {/* Global Announcements */}
             {globalNotifications.length > 0 && (
               <section className="mb-8 max-w-2xl mx-auto space-y-4">
@@ -2995,7 +3195,7 @@ function MainApp() {
                       </div>
                     </div>
 
-                    <div className="flex justify-center gap-3">
+                    <div className="flex justify-center gap-3 flex-wrap">
                       <button 
                         onClick={logOut}
                         className="inline-flex items-center gap-2 px-6 py-2 bg-slate-800/60 text-slate-300 rounded-full font-medium hover:bg-slate-700/60 transition-colors"
@@ -3003,6 +3203,15 @@ function MainApp() {
                         <LogOut size={18} />
                         Sign Out
                       </button>
+                      {!userProfile?.isVerified && (
+                        <button 
+                          onClick={handleRequestVerification}
+                          className="inline-flex items-center gap-2 px-6 py-2 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-full font-medium hover:bg-indigo-500/20 transition-colors"
+                        >
+                          <ShieldCheck size={18} />
+                          Request Verification
+                        </button>
+                      )}
                       <button 
                         onClick={() => handleShareProfile(user.uid, userProfile?.name || user.displayName || 'Anonymous', userProfile?.username)}
                         className="p-2 bg-slate-800/60 text-slate-300 rounded-full hover:bg-slate-700/60 transition-colors"
@@ -3196,7 +3405,7 @@ function MainApp() {
                       </div>
                     </div>
 
-                    <div className="flex justify-center gap-3">
+                    <div className="flex justify-center gap-3 flex-wrap">
                       <button 
                         onClick={() => {
                           setSelectedChatUser(viewingUserProfile);
@@ -3229,6 +3438,17 @@ function MainApp() {
                             Follow
                           </>
                         )}
+                      </button>
+                      <button 
+                        onClick={() => handleBlockUser(viewingUserProfile.uid)}
+                        className={`inline-flex items-center gap-2 px-6 py-2 rounded-full font-medium transition-colors ${
+                          userProfile?.blockedUsers?.includes(viewingUserProfile.uid) 
+                            ? 'bg-red-500 text-white hover:bg-red-600' 
+                            : 'bg-slate-800/60 text-slate-300 hover:bg-slate-700/60'
+                        }`}
+                      >
+                        <Ban size={18} />
+                        {userProfile?.blockedUsers?.includes(viewingUserProfile.uid) ? 'Unblock' : 'Block'}
                       </button>
                       <button 
                         onClick={() => handleShareProfile(viewingUserProfile.uid, viewingUserProfile.name, viewingUserProfile.username)}
@@ -3369,15 +3589,23 @@ function MainApp() {
                       >
                         <ChevronLeft size={24} />
                       </button>
-                      {selectedChatUser.photoURL ? (
-                        <img src={selectedChatUser.photoURL} alt={selectedChatUser.name} className="w-10 h-10 rounded-full border border-slate-700 object-cover" referrerPolicy="no-referrer" />
-                      ) : (
-                        <div className="w-10 h-10 rounded-full bg-indigo-900/50 text-indigo-400 flex items-center justify-center font-bold text-lg">
-                          {selectedChatUser.name.charAt(0).toUpperCase()}
-                        </div>
-                      )}
+                      <div className="relative">
+                        {selectedChatUser.photoURL ? (
+                          <img src={selectedChatUser.photoURL} alt={selectedChatUser.name} className="w-10 h-10 rounded-full border border-slate-700 object-cover" referrerPolicy="no-referrer" />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-indigo-900/50 text-indigo-400 flex items-center justify-center font-bold text-lg">
+                            {selectedChatUser.name.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        {selectedChatUser.isOnline && (
+                          <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-[#020617] rounded-full" />
+                        )}
+                      </div>
                       <div>
-                        <h3 className="font-bold text-white">{selectedChatUser.name}</h3>
+                        <h3 className="font-bold text-white text-sm sm:text-base">{selectedChatUser.name}</h3>
+                        <p className="text-[10px] text-slate-500">
+                          {selectedChatUser.isOnline ? 'Online' : selectedChatUser.lastSeen ? `Last seen ${selectedChatUser.lastSeen.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Offline'}
+                        </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -3413,7 +3641,7 @@ function MainApp() {
                                 <Trash2 size={14} />
                               </button>
                             )}
-                            <div className={`rounded-2xl px-4 py-2 ${isMe ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-[#0f172a]/80 border border-slate-800 text-slate-200 rounded-bl-sm'}`}>
+                            <div className={`rounded-2xl px-4 py-2 relative ${isMe ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-[#0f172a]/80 border border-slate-800 text-slate-200 rounded-bl-sm'}`}>
                               {msg.type === 'voice' ? (
                                 <div className="flex items-center gap-3 py-1">
                                   <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
@@ -3435,15 +3663,54 @@ function MainApp() {
                               ) : (
                                 msg.text
                               )}
+
+                              {/* Reactions Display */}
+                              {msg.reactions && Object.keys(msg.reactions).length > 0 && (
+                                <div className={`absolute -bottom-3 flex gap-1 ${isMe ? 'right-0' : 'left-0'}`}>
+                                  {Object.entries(msg.reactions).map(([emoji, uids]) => (
+                                    <div key={emoji} className="bg-slate-800 border border-slate-700 rounded-full px-1.5 py-0.5 text-[10px] flex items-center gap-1 shadow-lg">
+                                      <span>{emoji}</span>
+                                      <span className="text-slate-400">{(uids as string[]).length}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                             {!isMe && (
-                              <button 
-                                onClick={() => handleDeleteMessage(msg.id)}
-                                className="p-1 text-slate-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 shrink-0"
-                                title="Delete Message"
-                              >
-                                <Trash2 size={14} />
-                              </button>
+                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button 
+                                  onClick={() => setReactionPickerMessageId(msg.id)}
+                                  className="p-1 text-slate-600 hover:text-yellow-500 transition-colors"
+                                  title="React"
+                                >
+                                  <Heart size={14} />
+                                </button>
+                                <button 
+                                  onClick={() => handleDeleteMessage(msg.id)}
+                                  className="p-1 text-slate-600 hover:text-red-500 transition-colors"
+                                  title="Delete Message"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Reaction Picker */}
+                            {reactionPickerMessageId === msg.id && (
+                              <div className={`absolute z-50 bg-slate-800 border border-slate-700 rounded-full p-1 flex gap-1 shadow-2xl ${isMe ? 'right-full mr-2' : 'left-full ml-2'}`}>
+                                {['❤️', '👍', '😂', '😮', '😢', '🔥'].map(emoji => (
+                                  <button 
+                                    key={emoji}
+                                    onClick={() => handleReaction(msg.id, emoji)}
+                                    className="hover:bg-slate-700 p-1.5 rounded-full transition-colors text-lg"
+                                  >
+                                    {emoji}
+                                  </button>
+                                ))}
+                                <button onClick={() => setReactionPickerMessageId(null)} className="p-1 text-slate-500 hover:text-white">
+                                  <X size={14} />
+                                </button>
+                              </div>
                             )}
                           </div>
                           {isMe && (
@@ -3607,6 +3874,16 @@ function MainApp() {
                 </div>
                 <div className="flex gap-2 bg-slate-900/60 p-1 rounded-xl border border-slate-800 overflow-x-auto no-scrollbar max-w-full">
                   <button 
+                    onClick={() => setAdminActiveSubTab('verification')}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all shrink-0 flex items-center gap-2 ${adminActiveSubTab === 'verification' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    <ShieldCheck size={16} />
+                    Verification
+                    {verificationRequests.length > 0 && (
+                      <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{verificationRequests.length}</span>
+                    )}
+                  </button>
+                  <button 
                     onClick={() => setAdminActiveSubTab('withdrawals')}
                     className={`px-4 py-2 rounded-lg text-sm font-medium transition-all shrink-0 ${adminActiveSubTab === 'withdrawals' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:text-white'}`}
                   >
@@ -3731,6 +4008,55 @@ function MainApp() {
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Verification Tab */}
+              {adminActiveSubTab === 'verification' && (
+                <div className="space-y-6">
+                  <h3 className="text-xl font-semibold text-white flex items-center gap-2">
+                    <ShieldCheck size={20} className="text-indigo-400" />
+                    Verification Requests
+                  </h3>
+                  <div className="space-y-4">
+                    {verificationRequests.map(req => (
+                      <div key={req.id} className="bg-slate-900/40 p-4 rounded-2xl border border-slate-800/50 flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          {req.photoURL ? (
+                            <img src={req.photoURL} className="w-12 h-12 rounded-full object-cover" />
+                          ) : (
+                            <div className="w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center text-slate-500 font-bold">
+                              {req.name.charAt(0)}
+                            </div>
+                          )}
+                          <div>
+                            <div className="font-bold text-white">{req.name}</div>
+                            <div className="text-xs text-slate-500">@{req.username || 'no-username'}</div>
+                            <div className="text-[10px] text-slate-600">{req.requestedAt?.toDate().toLocaleString()}</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => handleApproveVerification(req)}
+                            className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-all"
+                          >
+                            Approve
+                          </button>
+                          <button 
+                            onClick={() => handleRejectVerification(req.id)}
+                            className="px-4 py-2 bg-slate-800 text-slate-400 rounded-xl text-xs font-bold hover:bg-slate-700 transition-all"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {verificationRequests.length === 0 && (
+                      <div className="text-center py-12 text-slate-500">
+                        No pending verification requests.
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
